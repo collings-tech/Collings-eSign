@@ -20,17 +20,25 @@ export default function SigningPage() {
   const [page1Rect, setPage1Rect] = useState(null);
   /** Per-page rects so fields on page 2+ are positioned correctly (same format as page1Rect: viewport-relative to inner) */
   const [pageRects, setPageRects] = useState([]);
+  const [linkExpired, setLinkExpired] = useState(false);
   const containerRef = useRef(null);
   const pdfInnerRef = useRef(null);
 
   const fetchInfo = useCallback(async () => {
+    setLinkExpired(false);
     try {
       const res = await apiClient.get(`/signing/${token}`);
       setInfo(res.data);
       setError("");
     } catch (err) {
       console.error(err);
-      setError(err.response?.data?.error || "Link not found");
+      const isExpired = err.response?.status === 410 || err.response?.data?.code === "LINK_EXPIRED";
+      if (isExpired) {
+        setLinkExpired(true);
+        setError("");
+      } else {
+        setError(err.response?.data?.error || "Link not found");
+      }
       setInfo(null);
     } finally {
       setLoading(false);
@@ -167,6 +175,23 @@ export default function SigningPage() {
       </div>
     );
   }
+  if (linkExpired) {
+    return (
+      <div className="signing-shell review-complete signing-expired-page">
+        <div className="signing-expired-card">
+          <div className="signing-expired-icon" aria-hidden>⏱</div>
+          <h1 className="signing-expired-title">This link has expired</h1>
+          <p className="signing-expired-text">
+            The signing link for this document is no longer valid. Links expire after 1 week for security.
+          </p>
+          <p className="signing-expired-text">
+            If you still need to sign, please ask the sender to resend the document.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   if (error || !info) {
     return (
       <div className="signing-shell review-complete">

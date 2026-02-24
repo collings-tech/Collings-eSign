@@ -6,7 +6,11 @@
 const { createClient } = require('@supabase/supabase-js');
 
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'documents';
-const SIGNED_URL_EXPIRY_SECONDS = 5 * 60; // 5 minutes
+const SIGNED_URL_EXPIRY_SECONDS = 5 * 60; // 5 minutes (default for backward compatibility)
+/** For document links sent in emails (e.g. signing link flow) */
+const ONE_WEEK_SECONDS = 7 * 24 * 60 * 60;
+/** For in-app document URLs (thumbnails, detail view, dashboard) */
+const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
 
 function getSupabase() {
   const url = process.env.SUPABASE_URL;
@@ -90,4 +94,6 @@ module.exports = {
   signedKey,
   BUCKET,
   SIGNED_URL_EXPIRY_SECONDS,
+  ONE_WEEK_SECONDS,
+  ONE_YEAR_SECONDS,
 };

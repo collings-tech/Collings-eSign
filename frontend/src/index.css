@@ -3426,6 +3426,44 @@ body.top-sidebar-open .top-sidebar {
   color: var(--color-text-inverse);
 }
 
+.signing-expired-page {
+  align-items: center;
+  justify-content: center;
+}
+
+.signing-expired-card {
+  max-width: 28rem;
+  padding: 2.5rem 2rem;
+  background: #312e81;
+  border-radius: 12px;
+  text-align: center;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.signing-expired-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  opacity: 0.9;
+}
+
+.signing-expired-title {
+  margin: 0 0 1rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--color-text-inverse);
+}
+
+.signing-expired-text {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.85);
+  line-height: 1.5;
+}
+
+.signing-expired-text:last-child {
+  margin-bottom: 0;
+}
+
 .signing-review-header {
   flex-shrink: 0;
   display: flex;

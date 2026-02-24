@@ -221,11 +221,11 @@ router.get('/past-recipients', requireAuth, async (req, res) => {
   }
 });
 
-// Resolve view URL for a document (signed version if exists, else original). For storage: signed URL; for legacy: /uploads/ path.
+// Resolve view URL for a document (signed version if exists, else original). For storage: signed URL (1 year for in-app).
 async function getDocumentViewUrl(doc, baseUrl) {
   const key = doc.signedKey || doc.originalKey;
   if (key && storageService.isStorageConfigured()) {
-    return storageService.getSignedUrl(key);
+    return storageService.getSignedUrl(key, storageService.ONE_YEAR_SECONDS);
   }
   const filePath = doc.signedFilePath || doc.originalFilePath;
   if (filePath) {
@@ -411,6 +411,8 @@ router.post('/:id/send', requireAuth, async (req, res) => {
       });
     }
 
+    const oneWeekFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await SignRequest.updateMany({ documentId: doc._id }, { $set: { expiresAt: oneWeekFromNow } });
     await Document.findByIdAndUpdate(doc._id, { status: 'pending', sentAt: new Date() });
 
     res.json({ success: true, sentCount: signReqs.length });
@@ -469,7 +471,8 @@ router.post('/:id/resend', requireAuth, async (req, res) => {
           return res.status(400).json({ error: userMessage });
         }
       }
-      await SignRequest.findByIdAndUpdate(sr._id, { emailSentAt: new Date() });
+      const oneWeekFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      await SignRequest.findByIdAndUpdate(sr._id, { emailSentAt: new Date(), expiresAt: oneWeekFromNow });
       await logEvent({
         documentId: doc._id.toString(),
         signRequestId: sr._id,

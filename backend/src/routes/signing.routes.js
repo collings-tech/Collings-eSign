@@ -8,11 +8,12 @@ const storageService = require('../services/storage.service');
 
 const router = express.Router();
 
-async function getDocumentViewUrl(doc, baseUrl) {
+async function getDocumentViewUrl(doc, baseUrl, expiresInSeconds) {
   // Always prefer signed over original so after Complete the viewer gets the signed PDF
   const key = doc.signedKey || doc.originalKey;
   if (key && storageService.isStorageConfigured()) {
-    const url = await storageService.getSignedUrl(key);
+    const expiry = expiresInSeconds ?? storageService.ONE_WEEK_SECONDS;
+    const url = await storageService.getSignedUrl(key, expiry);
     return url;
   }
   const filePath = doc.signedFilePath || doc.originalFilePath;
@@ -27,6 +28,10 @@ async function getDocumentViewUrl(doc, baseUrl) {
   return null;
 }
 
+function isSignLinkExpired(signReq) {
+  return signReq.expiresAt && new Date(signReq.expiresAt) < new Date();
+}
+
 // Public: get signed URL for document PDF (for signing page to load PDF). Prefer this over constructing /uploads/ path.
 router.get('/:token/file-url', async (req, res) => {
   try {
@@ -35,12 +40,15 @@ router.get('/:token/file-url', async (req, res) => {
     if (!signReq) {
       return res.status(404).json({ error: 'Sign request not found' });
     }
+    if (isSignLinkExpired(signReq)) {
+      return res.status(410).json({ error: 'This link has expired', code: 'LINK_EXPIRED' });
+    }
     const doc = await Document.findById(signReq.documentId).lean();
     if (!doc) {
       return res.status(404).json({ error: 'Document not found' });
     }
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const url = await getDocumentViewUrl(doc, baseUrl);
+    const url = await getDocumentViewUrl(doc, baseUrl, storageService.ONE_WEEK_SECONDS);
     if (!url) {
       return res.status(404).json({ error: 'Document file not found' });
     }
@@ -58,6 +66,9 @@ router.get('/:token', async (req, res) => {
     const signReq = await SignRequest.findOne({ signLinkToken: token }).lean();
     if (!signReq) {
       return res.status(404).json({ error: 'Sign request not found' });
+    }
+    if (isSignLinkExpired(signReq)) {
+      return res.status(410).json({ error: 'This link has expired', code: 'LINK_EXPIRED' });
     }
     const doc = await Document.findById(signReq.documentId).lean();
     if (!doc) {
@@ -107,6 +118,13 @@ router.post('/:token/sign', async (req, res) => {
     if (!signatureData) {
       return res.status(400).json({ error: 'Signature data is required' });
     }
+    const existing = await SignRequest.findOne({ signLinkToken: token }).lean();
+    if (!existing) {
+      return res.status(404).json({ error: 'Sign request not found' });
+    }
+    if (isSignLinkExpired(existing)) {
+      return res.status(410).json({ error: 'This link has expired', code: 'LINK_EXPIRED' });
+    }
     const signReq = await saveSignatureOnly({ token, signatureData });
     if (!signReq) {
       return res.status(404).json({ error: 'Sign request not found' });
@@ -125,6 +143,9 @@ router.post('/:token/complete', async (req, res) => {
     const signReq = await SignRequest.findOne({ signLinkToken: token });
     if (!signReq) {
       return res.status(404).json({ error: 'Sign request not found' });
+    }
+    if (isSignLinkExpired(signReq)) {
+      return res.status(410).json({ error: 'This link has expired', code: 'LINK_EXPIRED' });
     }
     if (signReq.status === 'signed') {
       return res.json({ success: true });

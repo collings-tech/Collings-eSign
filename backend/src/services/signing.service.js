@@ -31,6 +31,8 @@ async function createSignRequest({
   });
 
   if (!keepDraft) {
+    const oneWeekFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await SignRequest.findByIdAndUpdate(signRequest._id, { expiresAt: oneWeekFromNow });
     await logEvent({
       documentId,
       signRequestId: signRequest._id,
