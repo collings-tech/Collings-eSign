@@ -145,6 +145,13 @@ export default function SigningPage() {
     try {
       await apiClient.post(`/signing/${token}/complete`);
       await fetchInfo();
+      // Force viewer to unload current PDF, then load the signed one (avoids cache showing original)
+      setFileUrl(null);
+      const urlRes = await apiClient.get(`/signing/${token}/file-url`);
+      const signedUrl = urlRes.data?.url;
+      if (signedUrl) {
+        setTimeout(() => setFileUrl(signedUrl), 1000);
+      }
       setShowSigningCompletedMessage(true);
     } catch (err) {
       setCompleteError(err.response?.data?.error || "Could not complete");
@@ -247,7 +254,10 @@ export default function SigningPage() {
                   }}
                 >
                   {fileUrl ? (
-                    <PdfViewer fileUrl={fileUrl} />
+                    <PdfViewer
+                      key={isSigned ? `signed-${doc?.id}-${fileUrl}` : `draft-${fileUrl}`}
+                      fileUrl={fileUrl}
+                    />
                   ) : (
                     <div className="signing-loading">Loading PDF…</div>
                   )}

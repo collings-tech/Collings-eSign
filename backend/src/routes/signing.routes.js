@@ -9,13 +9,20 @@ const storageService = require('../services/storage.service');
 const router = express.Router();
 
 async function getDocumentViewUrl(doc, baseUrl) {
+  // Always prefer signed over original so after Complete the viewer gets the signed PDF
   const key = doc.signedKey || doc.originalKey;
   if (key && storageService.isStorageConfigured()) {
-    return storageService.getSignedUrl(key);
+    const url = await storageService.getSignedUrl(key);
+    return url;
   }
   const filePath = doc.signedFilePath || doc.originalFilePath;
   if (filePath) {
-    return `${baseUrl}/uploads/${filePath}`;
+    let url = `${baseUrl}/uploads/${filePath}`;
+    if (doc.signedFilePath) {
+      url += url.includes('?') ? '&' : '?';
+      url += `v=signed&t=${Date.now()}`;
+    }
+    return url;
   }
   return null;
 }

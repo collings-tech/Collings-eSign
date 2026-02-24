@@ -157,8 +157,15 @@ async function embedSignatureInPdf(doc, signRequest) {
   if (fields.length === 0) {
     fields = [{ page: 1, x: 100, y: 400, width: 180, height: 36, type: "signature" }];
   }
+  const sigFieldCount = fields.filter((f) => {
+    const t = String(f.type || "signature").toLowerCase();
+    return t === "signature" || t === "initial";
+  }).length;
+  console.log("[pdfSign] Embedding signature:", { fields: fields.length, sigFields: sigFieldCount, hasImage: !!embeddedImage, hasTyped: !!typedData, useStorage });
+
   for (const f of fields) {
-    const isSig = (f.type || "signature") === "signature" || (f.type || "signature") === "initial";
+    const typeLower = String(f.type || "signature").toLowerCase();
+    const isSig = typeLower === "signature" || typeLower === "initial";
     if (!isSig) continue;
 
     const pageIndex = Math.max(0, (f.page || 1) - 1);
@@ -171,11 +178,15 @@ async function embedSignatureInPdf(doc, signRequest) {
     const renderH = doc.page1RenderHeight > 0 ? doc.page1RenderHeight : (pageHeight / pageWidth) * renderW;
     const scaleX = pageWidth / renderW;
     const scaleY = pageHeight / renderH;
-    const x = (Number(f.x) || 0) * scaleX;
+    const xRaw = (Number(f.x) || 0) * scaleX;
     const y = (Number(f.y) || 0) * scaleY;
-    const w = (Number(f.width) || 160) * scaleX;
-    const h = (Number(f.height) || 36) * scaleY;
-    const yPdf = pageHeight - y - h;
+    const w = Math.max(20, Math.min((Number(f.width) || 160) * scaleX, pageWidth - 40));
+    const h = Math.max(20, Math.min((Number(f.height) || 36) * scaleY, pageHeight - 40));
+    const x = Math.max(0, Math.min(xRaw, pageWidth - w));
+    // yPdf = bottom-edge of box in PDF coords (y is from top in render space). Clamp so box stays on page.
+    let yPdf = pageHeight - y - h;
+    if (yPdf < 0) yPdf = 0;
+    if (yPdf + h > pageHeight) yPdf = pageHeight - h;
 
     const pad = BORDER_PADDING * Math.min(scaleX, scaleY);
     const innerX = x + pad;
@@ -230,7 +241,7 @@ async function embedSignatureInPdf(doc, signRequest) {
       }
     } else if (typedData) {
       try {
-        const isInitial = (f.type || "signature").toLowerCase() === "initial";
+        const isInitial = typeLower === "initial";
         const signerName = signRequest.signerName || "Signed";
         let text = isInitial && typedData.initials
           ? typedData.initials
@@ -269,12 +280,28 @@ async function embedSignatureInPdf(doc, signRequest) {
       } catch (err) {
         console.error("[pdfSign] Failed to draw typed signature:", err.message);
       }
+    } else {
+      // Fallback: draw signer name as text so signature always appears (e.g. image/typed failed or unexpected format)
+      try {
+        const signerName = (signRequest.signerName || "Signed").trim() || "Signed";
+        const fallbackFontSize = Math.min(12, Math.max(8, innerH * 0.4));
+        const fallbackY = innerY + innerH / 2 - fallbackFontSize / 2;
+        page.drawText(signerName, {
+          x: innerX + SIG_TEXT_MARGIN_H,
+          y: fallbackY,
+          size: fallbackFontSize,
+          font: helvetica,
+          color: black,
+        });
+      } catch (err) {
+        console.error("[pdfSign] Failed to draw fallback signature text:", err.message);
+      }
     }
 
     try {
       page.drawText("Signed by:", {
         x: x+10,
-        y: labelY -2,
+        y: labelY +2,
         size: labelH+1,
         font: helvetica,
         color: black,
@@ -287,7 +314,7 @@ async function embedSignatureInPdf(doc, signRequest) {
       try {
         page.drawText(signedById, {
           x: x+5,
-          y: idY-4,
+          y: idY-3,
           size: idH,
           font: helvetica,
           color: black,
@@ -298,10 +325,17 @@ async function embedSignatureInPdf(doc, signRequest) {
     }
   }
 
+  const outBytes = await pdfDoc.save();
+  if (useStorage) {
+    const signedKeyPath = storageService.signedKey(doc._id.toString());
+    await storageService.upload(signedKeyPath, Buffer.from(outBytes));
+    console.log("[pdfSign] Saved signed PDF to storage:", signedKeyPath);
+    return signedKeyPath;
+  }
   const outFilename = `signed-${doc._id.toString()}-${Date.now()}.pdf`;
   const outPath = path.join(uploadDir, outFilename);
-  const outBytes = await pdfDoc.save();
   await fs.writeFile(outPath, outBytes);
+  console.log("[pdfSign] Saved signed PDF to local:", outFilename);
   return outFilename;
 }
 
