@@ -4,8 +4,45 @@ const Document = require('../models/Document');
 const { saveSignatureOnly, completeSigning } = require('../services/signing.service');
 const AuditLog = require('../models/AuditLog');
 const { logEvent } = require('../services/audit.service');
+const storageService = require('../services/storage.service');
 
 const router = express.Router();
+
+async function getDocumentViewUrl(doc, baseUrl) {
+  const key = doc.signedKey || doc.originalKey;
+  if (key && storageService.isStorageConfigured()) {
+    return storageService.getSignedUrl(key);
+  }
+  const filePath = doc.signedFilePath || doc.originalFilePath;
+  if (filePath) {
+    return `${baseUrl}/uploads/${filePath}`;
+  }
+  return null;
+}
+
+// Public: get signed URL for document PDF (for signing page to load PDF). Prefer this over constructing /uploads/ path.
+router.get('/:token/file-url', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const signReq = await SignRequest.findOne({ signLinkToken: token }).lean();
+    if (!signReq) {
+      return res.status(404).json({ error: 'Sign request not found' });
+    }
+    const doc = await Document.findById(signReq.documentId).lean();
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const url = await getDocumentViewUrl(doc, baseUrl);
+    if (!url) {
+      return res.status(404).json({ error: 'Document file not found' });
+    }
+    res.json({ url });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // Public: get sign request info by token
 router.get('/:token', async (req, res) => {
@@ -33,7 +70,9 @@ router.get('/:token', async (req, res) => {
         id: doc._id,
         title: doc.title,
         status: doc.status,
-        originalFilePath: doc.originalFilePath,
+        originalKey: doc.originalKey || null,
+        signedKey: doc.signedKey || null,
+        originalFilePath: doc.originalFilePath || null,
         signedFilePath: doc.signedFilePath || null,
         page1RenderWidth: doc.page1RenderWidth || null,
         page1RenderHeight: doc.page1RenderHeight || null,

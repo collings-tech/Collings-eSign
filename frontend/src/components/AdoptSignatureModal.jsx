@@ -16,7 +16,7 @@ function getInitials(name) {
   return name.trim().slice(0, 2).toUpperCase();
 }
 
-export default function AdoptSignatureModal({ open, onClose, signerName = "", signerEmail = "", initialSignatureData, onAdoptAndSign }) {
+export default function AdoptSignatureModal({ open, onClose, signerName = "", signerEmail = "", initialSignatureData, onAdoptAndSign, initialsOnly = false }) {
   const [fullName, setFullName] = useState(signerName);
   const [initials, setInitials] = useState(getInitials(signerName));
   const [tab, setTab] = useState("style");
@@ -43,18 +43,18 @@ export default function AdoptSignatureModal({ open, onClose, signerName = "", si
     if (initialSignatureData && typeof initialSignatureData === "string") {
       if (initialSignatureData.startsWith("typed::")) {
         const parts = initialSignatureData.split("::");
-        if (parts[1]) setFullName(parts[1].trim());
+        if (!initialsOnly && parts[1]) setFullName(parts[1].trim());
         if (parts[3]) setInitials(parts[3].trim());
         const fontName = parts[2];
         const idx = SIGNATURE_FONTS.indexOf(fontName);
         if (idx >= 0) setStyleIndex(idx);
         setTab("style");
-      } else if (initialSignatureData.startsWith("data:image/")) {
+      } else if (!initialsOnly && initialSignatureData.startsWith("data:image/")) {
         setUploadDataUrl(initialSignatureData);
         setTab("upload");
       }
     }
-  }, [open, signerName, initialSignatureData]);
+  }, [open, signerName, initialSignatureData, initialsOnly]);
 
   useEffect(() => {
     if (!showFontList) return;
@@ -81,7 +81,7 @@ export default function AdoptSignatureModal({ open, onClose, signerName = "", si
 
   const handleAdopt = async () => {
     setError("");
-    if (!fullName.trim()) {
+    if (!initialsOnly && !fullName.trim()) {
       setError("Please enter your full name.");
       return;
     }
@@ -90,20 +90,24 @@ export default function AdoptSignatureModal({ open, onClose, signerName = "", si
       return;
     }
     let signatureData = "";
-    if (tab === "draw") {
+    if (!initialsOnly && tab === "draw") {
       if (!drawRef.current || drawRef.current.isEmpty()) {
         setError("Please draw your signature.");
         return;
       }
       signatureData = drawRef.current.toDataURL("image/png");
-    } else if (tab === "upload") {
+    } else if (!initialsOnly && tab === "upload") {
       if (!uploadDataUrl) {
         setError("Please upload an image of your signature.");
         return;
       }
       signatureData = uploadDataUrl;
     } else {
-      signatureData = `typed::${displayName}::${font}::${displayInitials}`;
+      if (initialsOnly) {
+        signatureData = `typed::::${font}::${displayInitials}::14`;
+      } else {
+        signatureData = `typed::${displayName}::${font}::${displayInitials}`;
+      }
     }
     try {
       await onAdoptAndSign({ signatureData, fullName: fullName.trim(), initials: initials.trim() });
@@ -130,19 +134,21 @@ export default function AdoptSignatureModal({ open, onClose, signerName = "", si
         <button type="button" className="adopt-modal-close" onClick={handleClose} aria-label="Close">
           ×
         </button>
-        <h2 id="adopt-modal-title" className="adopt-modal-title">Adopt Your Signature</h2>
-        <p className="adopt-modal-subtitle">Confirm your name, initials, and signature.</p>
+        <h2 id="adopt-modal-title" className="adopt-modal-title">{initialsOnly ? "Adopt Your Initials" : "Adopt Your Signature"}</h2>
+        <p className="adopt-modal-subtitle">{initialsOnly ? "Confirm your initials for this document." : "Confirm your name, initials, and signature."}</p>
 
         <div className="adopt-modal-fields">
-          <label className="adopt-modal-field">
-            <span>Full Name *</span>
-            <input
-              type="text"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              placeholder="Full name"
-            />
-          </label>
+          {!initialsOnly && (
+            <label className="adopt-modal-field">
+              <span>Full Name *</span>
+              <input
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Full name"
+              />
+            </label>
+          )}
           <label className="adopt-modal-field">
             <span>Initials *</span>
             <input
@@ -155,7 +161,7 @@ export default function AdoptSignatureModal({ open, onClose, signerName = "", si
         </div>
 
         <div className="adopt-modal-tabs">
-          {["style", "draw", "upload"].map((t) => (
+          {(initialsOnly ? ["style"] : ["style", "draw", "upload"]).map((t) => (
             <button
               key={t}
               type="button"
@@ -172,7 +178,7 @@ export default function AdoptSignatureModal({ open, onClose, signerName = "", si
             <>
               <div className="adopt-style-preview-wrap" ref={fontListRef}>
                 <div className="adopt-style-preview" style={{ fontFamily: font, fontSize: "16px" }}>
-                  {displayName}
+                  {initialsOnly ? displayInitials : displayName}
                 </div>
                 <div className="adopt-change-style-wrap">
                   <button
@@ -204,7 +210,7 @@ export default function AdoptSignatureModal({ open, onClose, signerName = "", si
                               setShowFontList(false);
                             }}
                           >
-                            {displayName}
+                            {initialsOnly ? displayInitials : displayName}
                           </button>
                         </li>
                       ))}
@@ -212,7 +218,7 @@ export default function AdoptSignatureModal({ open, onClose, signerName = "", si
                   )}
                 </div>
               </div>
-              <p className="adopt-style-hint">Your signature will appear in the PDF in this style.</p>
+              <p className="adopt-style-hint">{initialsOnly ? "Your initials will appear in the PDF in this style." : "Your signature will appear in the PDF in this style."}</p>
             </>
           )}
           {tab === "draw" && (
@@ -245,25 +251,29 @@ export default function AdoptSignatureModal({ open, onClose, signerName = "", si
         </div>
 
         <div className="adopt-preview-section">
-          <div className="adopt-preview-box">
-            <span className="adopt-preview-label">Signed by:</span>
-            {tab === "style" && <span className="adopt-preview-sig" style={{ fontFamily: font }}>{displayName}</span>}
-            {tab === "draw" && drawRef.current && !drawRef.current.isEmpty() && (
-              <img src={drawRef.current.toDataURL("image/png")} alt="" className="adopt-preview-img" />
-            )}
-            {tab === "upload" && uploadedImage && <img src={uploadedImage} alt="" className="adopt-preview-img" />}
-            {tab === "draw" && (!drawRef.current || drawRef.current.isEmpty()) && (
-              <span className="adopt-preview-placeholder">Draw above</span>
-            )}
-          </div>
+          {!initialsOnly && (
+            <div className="adopt-preview-box">
+              <span className="adopt-preview-label">Signed by:</span>
+              {tab === "style" && <span className="adopt-preview-sig" style={{ fontFamily: font }}>{displayName}</span>}
+              {tab === "draw" && drawRef.current && !drawRef.current.isEmpty() && (
+                <img src={drawRef.current.toDataURL("image/png")} alt="" className="adopt-preview-img" />
+              )}
+              {tab === "upload" && uploadedImage && <img src={uploadedImage} alt="" className="adopt-preview-img" />}
+              {tab === "draw" && (!drawRef.current || drawRef.current.isEmpty()) && (
+                <span className="adopt-preview-placeholder">Draw above</span>
+              )}
+            </div>
+          )}
           <div className="adopt-preview-box adopt-preview-initials">
-            <span className="adopt-preview-label">Initials</span>
+            <span className="adopt-preview-label">{initialsOnly ? "Initials" : "Initials"}</span>
             <span className="adopt-preview-initials-text" style={{ fontFamily: font }}>{displayInitials}</span>
           </div>
         </div>
 
         <p className="adopt-legal">
-          By selecting Adopt and Sign, I agree that the signature and initials will be the electronic representation of my signature and initials for all purposes when I (or my agent) use them on documents, including legally binding contracts.
+          {initialsOnly
+            ? "By selecting Adopt and Sign, I agree that these initials will be the electronic representation of my initials for all purposes when I (or my agent) use them on this document, including legally binding contracts."
+            : "By selecting Adopt and Sign, I agree that the signature and initials will be the electronic representation of my signature and initials for all purposes when I (or my agent) use them on documents, including legally binding contracts."}
         </p>
 
         {error && <p className="adopt-error">{error}</p>}
@@ -273,7 +283,7 @@ export default function AdoptSignatureModal({ open, onClose, signerName = "", si
             Cancel
           </button>
           <button type="button" className="adopt-btn primary" onClick={handleAdopt}>
-            Adopt and Sign
+            {initialsOnly ? "Adopt and Sign" : "Adopt and Sign"}
           </button>
         </div>
       </div>

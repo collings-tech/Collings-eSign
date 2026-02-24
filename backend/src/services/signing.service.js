@@ -3,7 +3,7 @@ const Document = require("../models/Document");
 const SignRequest = require("../models/SignRequest");
 const User = require("../models/User");
 const { logEvent } = require("./audit.service");
-const { sendSignRequestEmail, sendDocuSignStyleSignEmail } = require("./email.service");
+const { sendSignRequestEmail, sendDocuSignStyleSignEmail, sendDocumentCompletedEmail, sendSignedWaitingForOthersEmail } = require("./email.service");
 const { embedSignatureInPdf } = require("./pdfSign.service");
 
 function generateToken() {
@@ -86,17 +86,21 @@ async function completeSigning({ token, ip, userAgent }) {
     throw new Error("Document not found");
   }
 
-  let signedFilename;
+  let signedResult;
   try {
-    signedFilename = await embedSignatureInPdf(doc, signRequest);
+    signedResult = await embedSignatureInPdf(doc, signRequest);
   } catch (err) {
     console.error("[signing] embedSignatureInPdf failed", err);
     throw err;
   }
 
-  await Document.findByIdAndUpdate(signRequest.documentId, {
-    signedFilePath: signedFilename,
-  });
+  const update = {};
+  if (signedResult.startsWith("documents/")) {
+    update.signedKey = signedResult;
+  } else {
+    update.signedFilePath = signedResult;
+  }
+  await Document.findByIdAndUpdate(signRequest.documentId, update);
 
   signRequest.status = "signed";
   signRequest.signedAt = new Date();
@@ -112,16 +116,50 @@ async function completeSigning({ token, ip, userAgent }) {
     eventType: "signed",
   });
 
-  // If all sign requests for this document are signed, mark document completed
-  const allForDoc = await SignRequest.find({
+  const documentTitle = doc.title || "Document";
+
+  // Only treat envelope as complete when every signer has signed (fresh count from DB)
+  const totalSigners = await SignRequest.countDocuments({
     documentId: signRequest.documentId,
-  }).lean();
-  const allSigned = allForDoc.every((r) => r.status === "signed");
-  if (allSigned && allForDoc.length > 0) {
+  });
+  const signedCount = await SignRequest.countDocuments({
+    documentId: signRequest.documentId,
+    status: "signed",
+  });
+  const allSigned = totalSigners > 0 && totalSigners === signedCount;
+
+  if (allSigned) {
     await Document.findByIdAndUpdate(signRequest.documentId, {
       status: "completed",
+      signedAt: new Date(),
     });
+    // Email the completed document to ALL recipients only when envelope is fully complete
+    const allForDoc = await SignRequest.find({
+      documentId: signRequest.documentId,
+    }).lean();
+    try {
+      for (const sr of allForDoc) {
+        await sendDocumentCompletedEmail({
+          to: sr.signerEmail,
+          recipientName: sr.signerName,
+          token: sr.signLinkToken,
+          documentTitle,
+        });
+      }
+    } catch (err) {
+      console.error("[signing] sendDocumentCompletedEmail to all failed", err);
+    }
   } else {
+    // Not all signed: tell this signer they've signed and will get the document by email when envelope is complete
+    try {
+      await sendSignedWaitingForOthersEmail({
+        to: signRequest.signerEmail,
+        recipientName: signRequest.signerName,
+        documentTitle,
+      });
+    } catch (err) {
+      console.error("[signing] sendSignedWaitingForOthersEmail failed", err);
+    }
     // If signing order is set, send the next signer in order
     await sendToNextSignerInOrder(signRequest.documentId.toString());
   }

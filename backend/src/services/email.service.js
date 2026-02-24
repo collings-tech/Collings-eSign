@@ -301,11 +301,143 @@ async function sendForgotPasswordOtpEmail({ to, otp }) {
   await t.sendMail(mailOptions);
 }
 
+/** Signed but envelope not complete – "You've successfully signed; wait for others; you'll get the document by email when complete" */
+function buildSignedWaitingForOthersHtml({ documentTitle, recipientName }) {
+  const displayTitle = documentTitle.endsWith('.pdf') ? documentTitle : `${documentTitle}.pdf`;
+  const safeDocTitle = displayTitle.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const safeName = (recipientName || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f5f5f5;">
+  <div style="max-width:600px; margin:0 auto; background:#fff;">
+    <div style="height:4px; background: linear-gradient(90deg, #38a5b0 0%, #55c5d0 100%);"></div>
+    <div style="padding:24px 24px 16px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:24px;">
+       <img src="${LOGO_URL}" alt="Collings" style="height:22px;width:auto;display:inline-block;vertical-align:middle;" /><span style="font-size:14px; font-weight:500; color:#000000; vertical-align:middle; margin-left:2px;">eSign</span>
+      </div>
+      <div style="background:#55c5d082; border-radius:12px; padding:32px 24px; text-align:center;">
+        <p style="margin:0 0 16px; color:#000; font-size:18px; font-weight:600;">You&apos;ve successfully signed</p>
+        <p style="margin:0 0 24px; color:#000; font-size:16px; line-height:1.5;">
+          Please wait for the other recipients to finish signing. Once the envelope is complete, you&apos;ll receive an email with a link to download the document.
+        </p>
+        <p style="margin:0; color:#57595c; font-size:14px;">Document: <strong>${safeDocTitle}</strong></p>
+      </div>
+    </div>
+    <div style="padding:8px 24px 24px; color:#57595c; font-size:14px; line-height:1.6;">
+      ${safeName ? `<p style="margin:0 0 8px;">${safeName},</p>` : ''}
+      <p style="margin:24px 0 0;">Thank You,<br/>Collings eSign</p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+async function sendSignedWaitingForOthersEmail({ to, recipientName, documentTitle }) {
+  const t = getTransporter();
+  if (!t) {
+    console.warn('[email] SMTP not configured – skipping signed-waiting email to', to);
+    return;
+  }
+
+  const subject = `You've signed: ${documentTitle}`;
+  const html = buildSignedWaitingForOthersHtml({ documentTitle, recipientName });
+
+  const mailOptions = {
+    to,
+    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    subject,
+    text: `You've successfully signed.\n\nPlease wait for the other recipients to finish. Once the envelope is complete, you'll receive an email with a link to download the document.\n\nDocument: ${documentTitle}\n\nThank You,\nCollings eSign`,
+    html,
+  };
+
+  try {
+    await t.sendMail(mailOptions);
+    console.log('[email] Signed-waiting email sent to:', to);
+  } catch (err) {
+    console.error('[email] Failed to send signed-waiting email to', to, err);
+  }
+}
+
+/** Document completed – "Your document has been completed" + View Completed Document (same layout as other Collings eSign emails) */
+function buildDocumentCompletedHtml({ viewCompletedUrl, documentTitle, recipientName }) {
+  const displayTitle = documentTitle.endsWith('.pdf') ? documentTitle : `${documentTitle}.pdf`;
+  const safeDocTitle = displayTitle.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const safeName = (recipientName || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f5f5f5;">
+  <div style="max-width:600px; margin:0 auto; background:#fff;">
+    <div style="height:4px; background: linear-gradient(90deg, #38a5b0 0%, #55c5d0 100%);"></div>
+    <div style="padding:24px 24px 16px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:24px;">
+       <img src="${LOGO_URL}" alt="Collings" style="height:22px;width:auto;display:inline-block;vertical-align:middle;" /><span style="font-size:14px; font-weight:500; color:#000000; vertical-align:middle; margin-left:2px;">eSign</span>
+      </div>
+      <div style="background:#55c5d082; border-radius:12px; padding:32px 24px; text-align:center;">
+        <table cellpadding="0" cellspacing="0" border="0" align="center" style="width:48px; height:48px; margin:0 auto 16px; background:rgba(0,0,0,0.15); border-radius:50%;">
+          <tr><td align="center" valign="middle"><img src="${PEN_ICON_URL}" alt="" style="width:28px; height:28px; display:block; margin:0 auto;" /></td></tr>
+        </table>
+        <p style="margin:0 0 24px; color:#000; font-size:16px; line-height:1.5;">
+          Your document has been completed.
+        </p>
+        <a href="${viewCompletedUrl}" style="display:inline-block; padding:12px 28px; background:#000; color:#fff; text-decoration:none; font-weight:600; font-size:15px; border-radius:8px;">
+          View Completed Document
+        </a>
+      </div>
+    </div>
+    <div style="padding:8px 24px 24px; color:#57595c; font-size:14px; line-height:1.6;">
+      <p style="margin:0 0 8px;">All signers completed. Complete with Collings eSign: <strong>${safeDocTitle}</strong></p>
+      ${safeName ? `<p style="margin:16px 0 0;">${safeName},</p>` : ''}
+      <p style="margin:24px 0 0;">Thank You,<br/>Collings eSign</p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+async function sendDocumentCompletedEmail({ to, recipientName, token, documentTitle }) {
+  const t = getTransporter();
+  if (!t) {
+    console.warn('[email] SMTP not configured – skipping completion email to', to);
+    return;
+  }
+
+  const viewCompletedUrl = `${clientOrigin.replace(/\/+$/, '')}/sign/${token}`;
+  const subject = `Your document has been completed: ${documentTitle}`;
+  const html = buildDocumentCompletedHtml({
+    viewCompletedUrl,
+    documentTitle: documentTitle.endsWith('.pdf') ? documentTitle : `${documentTitle}.pdf`,
+    recipientName,
+  });
+
+  const mailOptions = {
+    to,
+    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    subject,
+    text: `Your document has been completed.\n\nDocument: ${documentTitle}\n\nView completed document: ${viewCompletedUrl}\n\nThank You,\nCollings eSign`,
+    html,
+  };
+
+  try {
+    await t.sendMail(mailOptions);
+    console.log('[email] Completion email sent to:', to);
+  } catch (err) {
+    console.error('[email] Failed to send completion email to', to, err);
+  }
+}
+
 module.exports = {
   sendSignRequestEmail,
   sendDocuSignStyleSignEmail,
   sendProfileOtpEmail,
   sendSignupOtpEmail,
   sendForgotPasswordOtpEmail,
+  sendSignedWaitingForOthersEmail,
+  sendDocumentCompletedEmail,
 };
 

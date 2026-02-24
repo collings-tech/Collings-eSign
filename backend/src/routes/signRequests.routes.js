@@ -7,11 +7,11 @@ const { createSignRequest } = require("../services/signing.service");
 
 const router = express.Router();
 
-// Create a sign request for a document
+// Create a sign request for a document (e.g. when adding a recipient from "Back" on prepare step)
 router.post("/:documentId", requireAuth, async (req, res) => {
   try {
     const { documentId } = req.params;
-    const { signerEmail, signerName, signatureFields, skipEmail } = req.body;
+    const { signerEmail, signerName, signatureFields, skipEmail, keepDraft, order } = req.body;
 
     if (!signerEmail || !signerName) {
       return res
@@ -27,13 +27,17 @@ router.post("/:documentId", requireAuth, async (req, res) => {
       return res.status(404).json({ error: "Document not found" });
     }
 
+    // When adding a signer to a draft (e.g. after clicking Back and adding recipient), keep doc as draft
+    const isDraft = doc.status === "draft";
     const signReq = await createSignRequest({
       documentId,
       ownerUser: { email: req.user.email },
-      signerEmail,
-      signerName,
-      signatureFields,
+      signerEmail: String(signerEmail).trim(),
+      signerName: String(signerName || "").trim(),
+      signatureFields: signatureFields || [],
       skipEmail: Boolean(skipEmail),
+      keepDraft: Boolean(keepDraft ?? isDraft),
+      order: typeof order === "number" ? order : undefined,
     });
 
     res.status(201).json(signReq);

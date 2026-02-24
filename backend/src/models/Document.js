@@ -18,8 +18,12 @@ const documentSchema = new mongoose.Schema(
   {
     ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     title: { type: String, required: true },
-    originalFilePath: { type: String, required: true },
-    signedFilePath: { type: String },
+    // Cloud storage keys (Supabase). When set, use storage service; otherwise fallback to local paths.
+    originalKey: { type: String },   // e.g. documents/{docId}/original.pdf
+    signedKey: { type: String },     // e.g. documents/{docId}/signed.pdf
+    originalFilePath: { type: String }, // legacy local path; required only when originalKey is not set
+    signedFilePath: { type: String },   // legacy local path
+    signedAt: { type: Date },        // set when document is fully signed (all signers done)
     status: {
       type: String,
       enum: ['draft', 'pending', 'completed', 'cancelled', 'deleted'],

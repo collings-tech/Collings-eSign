@@ -73,13 +73,16 @@ function getInitials(name, email) {
   return "?";
 }
 
+// Distinct pastel colors so multiple recipients are easy to tell apart
 const RECIPIENT_COLORS = [
-  { border: "#55c5d0", bg: "rgba(85, 197, 208, 0.2)" },
-  { border: "#45b5c0", bg: "rgba(69, 181, 192, 0.2)" },
-  { border: "#57595c", bg: "rgba(87, 89, 92, 0.15)" },
-  { border: "#38a5b0", bg: "rgba(56, 165, 176, 0.2)" },
-  { border: "#2d8a94", bg: "rgba(45, 138, 148, 0.2)" },
-  { border: "#7dd4dc", bg: "rgba(125, 212, 220, 0.25)" },
+  { border: "#5eb8d4", bg: "rgba(94, 184, 212, 0.35)" },   // pastel blue
+  { border: "#e8a0b8", bg: "rgba(232, 160, 184, 0.4)" },   // pastel pink
+  { border: "#7bc9a4", bg: "rgba(123, 201, 164, 0.35)" },  // pastel mint
+  { border: "#b8a5e0", bg: "rgba(184, 165, 224, 0.4)" },   // pastel lavender
+  { border: "#f0b88a", bg: "rgba(240, 184, 138, 0.4)" },   // pastel peach
+  { border: "#e8d478", bg: "rgba(232, 212, 120, 0.4)" },   // pastel yellow
+  { border: "#a8d4e0", bg: "rgba(168, 212, 224, 0.4)" },   // pastel sky
+  { border: "#d4a8c8", bg: "rgba(212, 168, 200, 0.35)" },  // pastel mauve
 ];
 
 function getRecipientColor(signRequestId, signers) {
@@ -122,6 +125,7 @@ export default function DocumentDetailPage() {
   const [pageToDelete, setPageToDelete] = useState(null);
   const [deletingPage, setDeletingPage] = useState(false);
   const [documentFileKey, setDocumentFileKey] = useState(0);
+  const [documentFileUrl, setDocumentFileUrl] = useState(null);
   const dragStartRef = useRef({ fieldX: 0, fieldY: 0, clientX: 0, clientY: 0 });
   const resizeStartRef = useRef({ x: 0, y: 0, w: 0, h: 0, clientX: 0, clientY: 0 });
   const dragTargetRef = useRef(null);
@@ -132,22 +136,41 @@ export default function DocumentDetailPage() {
 
   const FIELD_SIZE_LIMITS = { minW: 80, maxW: 400, minH: 24, maxH: 120 };
 
-  /** Measure first PDF page position/size so we can send page-relative coords for exact signature placement */
+  /** Measure all PDF page positions/sizes so we can send page-relative coords and detect which page a field is on */
   const getPagePlacementMeasurement = useCallback(() => {
     const overlay = overlayRef.current;
     const canvas = overlay?.closest?.(".prepare-doc-canvas");
     if (!overlay || !canvas) return null;
-    const firstPage = canvas.querySelector('[data-rp="page-1"]') || canvas.querySelector('[data-testid="page-1"]') || canvas.querySelector(".rpv-core__page-layer");
-    if (!firstPage) return null;
+    let pageEls = Array.from(canvas.querySelectorAll('[data-rp^="page-"]'));
+    if (!pageEls.length) {
+      const firstPage = canvas.querySelector('[data-testid="page-1"]') || canvas.querySelector(".rpv-core__page-layer");
+      if (!firstPage) return null;
+      pageEls = [firstPage];
+    }
     const overlayRect = overlay.getBoundingClientRect();
-    const pageRect = firstPage.getBoundingClientRect();
     const scale = zoom / 100;
+    const pages = [];
+    for (let i = 0; i < pageEls.length; i++) {
+      const el = pageEls[i];
+      const pageRect = el.getBoundingClientRect();
+      const match = el.getAttribute?.("data-rp")?.match(/page-(\d+)/);
+      const pageNum = match ? parseInt(match[1], 10) : i + 1;
+      pages.push({
+        pageNum,
+        offsetX: (pageRect.left - overlayRect.left) / scale,
+        offsetY: (pageRect.top - overlayRect.top) / scale,
+        pageRenderWidth: pageRect.width / scale,
+        pageRenderHeight: pageRect.height / scale,
+      });
+    }
+    pages.sort((a, b) => a.pageNum - b.pageNum);
+    const first = pages[0] || null;
     return {
-      // boundingClientRect includes zoom transform; normalize back to unscaled coords
-      offsetX: (pageRect.left - overlayRect.left) / scale,
-      offsetY: (pageRect.top - overlayRect.top) / scale,
-      pageRenderWidth: pageRect.width / scale,
-      pageRenderHeight: pageRect.height / scale,
+      offsetX: first?.offsetX ?? 0,
+      offsetY: first?.offsetY ?? 0,
+      pageRenderWidth: first?.pageRenderWidth ?? 800,
+      pageRenderHeight: first?.pageRenderHeight ?? undefined,
+      pages,
     };
   }, [zoom]);
 
@@ -195,9 +218,19 @@ export default function DocumentDetailPage() {
     if (placedFields.length === 0 || convertedToOverlayRef.current) return;
     const timer = setTimeout(() => {
       const m = getPagePlacementMeasurement();
-      if (m && (m.offsetX !== 0 || m.offsetY !== 0)) {
+      if (!m) return;
+      const pages = m.pages ?? [];
+      const getOffset = (pageNum) => {
+        const p = pages.find((pg) => pg.pageNum === (pageNum || 1));
+        return p ? { offsetX: p.offsetX, offsetY: p.offsetY } : { offsetX: m.offsetX ?? 0, offsetY: m.offsetY ?? 0 };
+      };
+      const hasOffset = pages.length ? pages.some((p) => p.offsetX !== 0 || p.offsetY !== 0) : (m.offsetX !== 0 || m.offsetY !== 0);
+      if (hasOffset) {
         setPlacedFields((prev) =>
-          prev.map((f) => ({ ...f, x: f.x + m.offsetX, y: f.y + m.offsetY }))
+          prev.map((f) => {
+            const { offsetX, offsetY } = getOffset(f.page);
+            return { ...f, x: f.x + offsetX, y: f.y + offsetY };
+          })
         );
         convertedToOverlayRef.current = true;
       }
@@ -205,7 +238,21 @@ export default function DocumentDetailPage() {
     return () => clearTimeout(timer);
   }, [placedFields.length, getPagePlacementMeasurement]);
 
-  const showDoc = !!doc?.originalFilePath;
+  const showDoc = !!(doc?.originalKey || doc?.originalFilePath);
+  useEffect(() => {
+    if (!doc?._id || (!doc.originalKey && !doc.originalFilePath)) {
+      setDocumentFileUrl(null);
+      return;
+    }
+    let cancelled = false;
+    apiClient.get(`/documents/${doc._id}/file-url`).then((res) => {
+      if (!cancelled && res.data?.url) setDocumentFileUrl(res.data.url);
+    }).catch(() => {
+      if (!cancelled) setDocumentFileUrl(null);
+    });
+    return () => { cancelled = true; };
+  }, [doc?._id, doc?.originalKey, doc?.originalFilePath, doc?.signedKey, doc?.signedFilePath]);
+
   useEffect(() => {
     if (!showDoc) return;
     const el = pdfInnerRef.current;
@@ -283,6 +330,8 @@ export default function DocumentDetailPage() {
     dragStartRef.current = {
       fieldX: field.x,
       fieldY: field.y,
+      fieldW: field.width,
+      fieldH: field.height,
       clientX: e.clientX,
       clientY: e.clientY,
     };
@@ -291,7 +340,7 @@ export default function DocumentDetailPage() {
   useEffect(() => {
     if (!draggingFieldId) return;
     const handlePointerMove = (e) => {
-      const { fieldX, fieldY, clientX, clientY } = dragStartRef.current;
+      const { fieldX, fieldY, fieldW, fieldH, clientX, clientY } = dragStartRef.current;
       const scale = zoom / 100;
       const dx = (e.clientX - clientX) / scale;
       const dy = (e.clientY - clientY) / scale;
@@ -301,12 +350,27 @@ export default function DocumentDetailPage() {
       dragStartRef.current = {
         fieldX: newX,
         fieldY: newY,
+        fieldW: fieldW ?? 110,
+        fieldH: fieldH ?? 55,
         clientX: e.clientX,
         clientY: e.clientY,
       };
     };
     const handlePointerUp = (e) => {
       const target = dragTargetRef.current;
+      const { fieldX, fieldY, fieldW, fieldH } = dragStartRef.current;
+      const measurement = getPagePlacementMeasurement();
+      if (measurement?.pages?.length && fieldW != null && fieldH != null) {
+        const cx = fieldX + fieldW / 2;
+        const cy = fieldY + fieldH / 2;
+        for (const p of measurement.pages) {
+          if (cx >= p.offsetX && cx <= p.offsetX + p.pageRenderWidth &&
+              cy >= p.offsetY && cy <= p.offsetY + (p.pageRenderHeight ?? p.pageRenderWidth)) {
+            updateField(draggingFieldId, { page: p.pageNum });
+            break;
+          }
+        }
+      }
       if (target?.releasePointerCapture && e.pointerId !== undefined) {
         try {
           target.releasePointerCapture(e.pointerId);
@@ -323,7 +387,7 @@ export default function DocumentDetailPage() {
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointerleave", handlePointerUp);
     };
-  }, [draggingFieldId, updateField, zoom]);
+  }, [draggingFieldId, updateField, zoom, getPagePlacementMeasurement]);
 
   const handleResizePointerDown = useCallback((e, field, handle) => {
     e.preventDefault();
@@ -456,25 +520,31 @@ export default function DocumentDetailPage() {
     setSavingFields(true);
     try {
       const measurement = getPagePlacementMeasurement();
-      const offsetX = measurement?.offsetX ?? 0;
-      const offsetY = measurement?.offsetY ?? 0;
       const page1RenderWidth = measurement?.pageRenderWidth ?? 800;
       const page1RenderHeight = measurement?.pageRenderHeight ?? undefined;
+      const pages = measurement?.pages ?? [];
+      const getPageOffset = (pageNum) => {
+        const p = pages.find((pg) => pg.pageNum === (pageNum || 1));
+        return p ? { offsetX: p.offsetX, offsetY: p.offsetY } : { offsetX: measurement?.offsetX ?? 0, offsetY: measurement?.offsetY ?? 0 };
+      };
       await apiClient.put(`/documents/${id}/signing-fields`, {
-        fields: placedFields.map((f) => ({
-          id: f.id,
-          signRequestId: f.signRequestId,
-          type: f.type,
-          page: f.page,
-          x: Math.max(0, f.x - offsetX),
-          y: Math.max(0, f.y - offsetY),
-          width: f.width,
-          height: f.height,
-          required: f.required,
-          dataLabel: f.dataLabel,
-          tooltip: f.tooltip,
-          scale: f.scale,
-        })),
+        fields: placedFields.map((f) => {
+          const { offsetX, offsetY } = getPageOffset(f.page);
+          return {
+            id: f.id,
+            signRequestId: f.signRequestId,
+            type: f.type,
+            page: f.page ?? 1,
+            x: Math.max(0, f.x - offsetX),
+            y: Math.max(0, f.y - offsetY),
+            width: f.width,
+            height: f.height,
+            required: f.required,
+            dataLabel: f.dataLabel,
+            tooltip: f.tooltip,
+            scale: f.scale,
+          };
+        }),
         page1RenderWidth: page1RenderWidth > 0 ? Math.round(page1RenderWidth) : undefined,
         page1RenderHeight: page1RenderHeight > 0 ? Math.round(page1RenderHeight) : undefined,
       });
@@ -513,25 +583,31 @@ export default function DocumentDetailPage() {
     setSending(true);
     try {
       const measurement = getPagePlacementMeasurement();
-      const offsetX = measurement?.offsetX ?? 0;
-      const offsetY = measurement?.offsetY ?? 0;
       const page1RenderWidth = measurement?.pageRenderWidth ?? 800;
       const page1RenderHeight = measurement?.pageRenderHeight ?? undefined;
+      const pages = measurement?.pages ?? [];
+      const getPageOffset = (pageNum) => {
+        const p = pages.find((pg) => pg.pageNum === (pageNum || 1));
+        return p ? { offsetX: p.offsetX, offsetY: p.offsetY } : { offsetX: measurement?.offsetX ?? 0, offsetY: measurement?.offsetY ?? 0 };
+      };
       await apiClient.put(`/documents/${id}/signing-fields`, {
-        fields: placedFields.map((f) => ({
-          id: f.id,
-          signRequestId: f.signRequestId,
-          type: f.type,
-          page: f.page,
-          x: Math.max(0, f.x - offsetX),
-          y: Math.max(0, f.y - offsetY),
-          width: f.width,
-          height: f.height,
-          required: f.required,
-          dataLabel: f.dataLabel,
-          tooltip: f.tooltip,
-          scale: f.scale,
-        })),
+        fields: placedFields.map((f) => {
+          const { offsetX, offsetY } = getPageOffset(f.page);
+          return {
+            id: f.id,
+            signRequestId: f.signRequestId,
+            type: f.type,
+            page: f.page ?? 1,
+            x: Math.max(0, f.x - offsetX),
+            y: Math.max(0, f.y - offsetY),
+            width: f.width,
+            height: f.height,
+            required: f.required,
+            dataLabel: f.dataLabel,
+            tooltip: f.tooltip,
+            scale: f.scale,
+          };
+        }),
         page1RenderWidth: page1RenderWidth > 0 ? Math.round(page1RenderWidth) : undefined,
         page1RenderHeight: page1RenderHeight > 0 ? Math.round(page1RenderHeight) : undefined,
       });
@@ -568,7 +644,7 @@ export default function DocumentDetailPage() {
     );
   }
 
-  const fileUrl = `${import.meta.env.VITE_API_BASE_URL || "http://localhost:4000"}/uploads/${doc.originalFilePath}${documentFileKey ? `?v=${documentFileKey}` : ""}`;
+  const fileUrl = documentFileUrl ? (documentFileKey ? `${documentFileUrl}${documentFileUrl.includes("?") ? "&" : "?"}v=${documentFileKey}` : documentFileUrl) : null;
   const currentSigner = signers[0];
   const displayName = currentSigner
     ? [currentSigner.signerName, currentSigner.signerEmail].filter(Boolean).join(" · ") || "Recipient"
@@ -601,11 +677,10 @@ export default function DocumentDetailPage() {
       })).filter((g) => g.items.length > 0)
     : STANDARD_FIELDS;
 
-  // Sent agreement view (not draft) — Collings eSign-style detail with Recipients / Details tabs
+  // Sent agreement view (not draft) — Collings eSign-style detail with Recipients / Details tabs.
+  // Only show prepare (assign fields + Send) when doc is draft; otherwise show agreement detail so we never try to save fields on a non-draft doc.
   if (!isDraft) {
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
-    const documentDisplayPath = doc.signedFilePath || doc.originalFilePath;
-    const documentDisplayUrl = `${baseUrl}/uploads/${documentDisplayPath}`;
+    const documentDisplayUrl = documentFileUrl;
     const copyEnvelopeId = () => {
       navigator.clipboard?.writeText(doc._id).then(() => {});
     };
@@ -768,13 +843,14 @@ export default function DocumentDetailPage() {
               <h3 className="agreement-detail-sidebar-title">Documents</h3>
               <div
                 className="agreement-detail-doc-thumb-wrap"
-                onClick={() => window.open(documentDisplayUrl, "_blank", "noopener,noreferrer")}
+                onClick={() => documentDisplayUrl && window.open(documentDisplayUrl, "_blank", "noopener,noreferrer")}
                 role="button"
                 tabIndex={0}
-                onKeyDown={(e) => e.key === "Enter" && window.open(documentDisplayUrl, "_blank", "noopener,noreferrer")}
+                onKeyDown={(e) => e.key === "Enter" && documentDisplayUrl && window.open(documentDisplayUrl, "_blank", "noopener,noreferrer")}
                 aria-label={`View document: ${envelopeTitle}`}
               >
                 <div className="agreement-detail-doc-thumb">
+                  {documentDisplayUrl ? (
                   <Document
                     file={documentDisplayUrl}
                     onLoadSuccess={({ numPages }) => setPdfPageCount(numPages)}
@@ -783,6 +859,9 @@ export default function DocumentDetailPage() {
                   >
                     <Page pageNumber={1} width={200} renderTextLayer={false} renderAnnotationLayer={false} />
                   </Document>
+                  ) : (
+                    <span className="agreement-detail-doc-thumb-loading">Loading…</span>
+                  )}
                 </div>
                 <span className="agreement-detail-doc-view-overlay">View</span>
               </div>
@@ -1001,8 +1080,8 @@ export default function DocumentDetailPage() {
                         top: f.y,
                         width: f.width,
                         height: f.height,
-                        borderColor: isSignatureType ? "#55c5d0" : color.border,
-                        backgroundColor: isSignatureType ? "rgba(85, 197, 208, 0.2)" : color.bg,
+                        borderColor: color.border,
+                        backgroundColor: color.bg,
                       }}
                       onPointerDown={(e) => handleFieldPointerDown(e, f)}
                       onKeyDown={(e) => {
@@ -1269,12 +1348,18 @@ export default function DocumentDetailPage() {
         {sendError != null && (
           <div className="prepare-send-error-backdrop" role="dialog" aria-modal="true" aria-labelledby="send-error-title" onClick={() => setSendError(null)}>
             <div className="prepare-send-error-modal" onClick={(e) => e.stopPropagation()}>
-              <h2 id="send-error-title" className="prepare-send-error-title">Email could not be sent</h2>
+              <h2 id="send-error-title" className="prepare-send-error-title">
+                {sendError.includes("draft") ? "Cannot update document" : "Email could not be sent"}
+              </h2>
               <p className="prepare-send-error-text">{sendError}</p>
-              <p className="prepare-send-error-hint">Please check and edit the recipient&apos;s email address, then try again.</p>
+              <p className="prepare-send-error-hint">
+                {sendError.includes("draft")
+                  ? "This document was already sent. Use the agreement detail view to resend or manage recipients."
+                  : "Please check and edit the recipient's email address, then try again."}
+              </p>
               <div className="prepare-send-error-actions">
                 <button type="button" className="prepare-btn primary" onClick={() => setSendError(null)}>
-                  Edit recipients
+                  {sendError.includes("draft") ? "OK" : "Edit recipients"}
                 </button>
               </div>
             </div>

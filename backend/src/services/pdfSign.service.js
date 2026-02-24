@@ -3,6 +3,7 @@ const path = require("path");
 const { PDFDocument, rgb, StandardFonts } = require("pdf-lib");
 const fontkit = require("@pdf-lib/fontkit");
 const { uploadDir } = require("../config/env");
+const storageService = require("./storage.service");
 
 const BORDER_PADDING = 5;
 /** Extra margin inside the border so typed signature glyphs (e.g. script 'j', ascenders) stay inside */
@@ -85,18 +86,28 @@ const FALLBACK_RENDER_WIDTH = 800;
 
 /**
  * Embed the signer's signature into the document PDF and save.
- * Uses the document's current PDF (signedFilePath if set, else originalFilePath).
- * @param {Object} doc - Document with originalFilePath, signedFilePath
+ * Uses the document's current PDF (signedKey/signedFilePath if set, else originalKey/originalFilePath).
+ * When using Supabase: downloads from storage, embeds, uploads to documents/{docId}/signed.pdf, returns key.
+ * Otherwise: reads/writes local disk, returns filename.
+ * @param {Object} doc - Document with originalKey, signedKey, originalFilePath, signedFilePath
  * @param {Object} signRequest - SignRequest with signatureFields, signatureData
- * @returns {Promise<string>} New filename (signed) to store in doc.signedFilePath
+ * @returns {Promise<string>} Storage key (e.g. documents/{docId}/signed.pdf) or local filename for doc.signedKey / doc.signedFilePath
  */
 async function embedSignatureInPdf(doc, signRequest) {
   if (!signRequest.signatureData) {
     throw new Error("No signature data to embed");
   }
 
-  const sourcePath = path.join(uploadDir, doc.originalFilePath);
-  const pdfBytes = await fs.readFile(sourcePath);
+  let pdfBytes;
+  const useStorage = doc.originalKey && storageService.isStorageConfigured();
+  if (useStorage) {
+    const sourceKey = doc.signedKey || doc.originalKey;
+    pdfBytes = await storageService.download(sourceKey);
+  } else {
+    const sourcePath = path.join(uploadDir, doc.signedFilePath || doc.originalFilePath);
+    pdfBytes = await fs.readFile(sourcePath);
+  }
+
   const pdfDoc = await PDFDocument.load(pdfBytes);
   pdfDoc.registerFontkit(fontkit);
   const pages = pdfDoc.getPages();
@@ -263,8 +274,8 @@ async function embedSignatureInPdf(doc, signRequest) {
     try {
       page.drawText("Signed by:", {
         x: x+10,
-        y: labelY + 5,
-        size: labelH+3,
+        y: labelY -2,
+        size: labelH+1,
         font: helvetica,
         color: black,
       });
@@ -276,8 +287,8 @@ async function embedSignatureInPdf(doc, signRequest) {
       try {
         page.drawText(signedById, {
           x: x+5,
-          y: idY-5,
-          size: idH+3,
+          y: idY-4,
+          size: idH,
           font: helvetica,
           color: black,
         });

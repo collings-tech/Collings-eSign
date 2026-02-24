@@ -11,6 +11,7 @@ const { uploadDir } = require('../config/env');
 const { createSignRequest } = require('../services/signing.service');
 const { sendDocuSignStyleSignEmail } = require('../services/email.service');
 const { logEvent } = require('../services/audit.service');
+const storageService = require('../services/storage.service');
 
 const router = express.Router();
 
@@ -53,22 +54,6 @@ router.post('/', requireAuth, upload, async (req, res) => {
       return res.status(400).json({ error: 'PDF file is required' });
     }
 
-    let savedFilename;
-    if (uploadedFiles.length === 1) {
-      savedFilename = `${Date.now()}-${Math.round(Math.random() * 1e9)}.pdf`;
-      await fs.writeFile(path.join(uploadDir, savedFilename), uploadedFiles[0].buffer);
-    } else {
-      const mergedPdf = await PDFDocument.create();
-      for (const f of uploadedFiles) {
-        const src = await PDFDocument.load(f.buffer);
-        const pages = await mergedPdf.copyPages(src, src.getPageIndices());
-        pages.forEach((p) => mergedPdf.addPage(p));
-      }
-      const mergedBytes = await mergedPdf.save();
-      savedFilename = `${Date.now()}-${Math.round(Math.random() * 1e9)}.pdf`;
-      await fs.writeFile(path.join(uploadDir, savedFilename), mergedBytes);
-    }
-
     const { title } = req.body;
     if (!title) {
       return res.status(400).json({ error: 'Title is required' });
@@ -76,10 +61,24 @@ router.post('/', requireAuth, upload, async (req, res) => {
 
     const { recipients = [], subject = '', message = '', reminderFrequency = 'every_day', signingOrder = false } = parseBodyFields(req.body);
 
+    let pdfBuffer;
+    if (uploadedFiles.length === 1) {
+      pdfBuffer = uploadedFiles[0].buffer;
+    } else {
+      const mergedPdf = await PDFDocument.create();
+      for (const f of uploadedFiles) {
+        const src = await PDFDocument.load(f.buffer);
+        const pages = await mergedPdf.copyPages(src, src.getPageIndices());
+        pages.forEach((p) => mergedPdf.addPage(p));
+      }
+      pdfBuffer = Buffer.from(await mergedPdf.save());
+    }
+
+    const useStorage = storageService.isStorageConfigured();
     const doc = await Document.create({
       ownerId: req.user.id,
       title,
-      originalFilePath: savedFilename,
+      originalFilePath: useStorage ? undefined : `${Date.now()}-${Math.round(Math.random() * 1e9)}.pdf`,
       status: 'draft',
       recipients: Array.isArray(recipients) ? recipients.map((r, i) => ({
         name: r.name || '',
@@ -92,6 +91,15 @@ router.post('/', requireAuth, upload, async (req, res) => {
       reminderFrequency: ['every_day', 'every_3_days', 'every_5_days', 'weekly', 'never'].includes(reminderFrequency) ? reminderFrequency : 'every_day',
       signingOrder: Boolean(signingOrder),
     });
+
+    if (useStorage) {
+      const key = storageService.originalKey(doc._id.toString());
+      await storageService.upload(key, pdfBuffer);
+      doc.originalKey = key;
+      await doc.save();
+    } else {
+      await fs.writeFile(path.join(uploadDir, doc.originalFilePath), pdfBuffer);
+    }
 
     // Create sign requests for signer recipients (no email sent yet; user will Send from detail)
     const signers = (doc.recipients || []).filter((r) => r.role === 'signer');
@@ -207,6 +215,49 @@ router.get('/past-recipients', requireAuth, async (req, res) => {
     }
     list.sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email));
     res.json(list);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Resolve view URL for a document (signed version if exists, else original). For storage: signed URL; for legacy: /uploads/ path.
+async function getDocumentViewUrl(doc, baseUrl) {
+  const key = doc.signedKey || doc.originalKey;
+  if (key && storageService.isStorageConfigured()) {
+    return storageService.getSignedUrl(key);
+  }
+  const filePath = doc.signedFilePath || doc.originalFilePath;
+  if (filePath) {
+    return `${baseUrl}/uploads/${filePath}`;
+  }
+  return null;
+}
+
+// Get signed/view URL for document PDF (owner or signer). Use this URL to display or download the PDF.
+router.get('/:id/file-url', requireAuth, async (req, res) => {
+  try {
+    let doc = await Document.findOne({ _id: req.params.id, ownerId: req.user.id }).lean();
+    if (!doc) {
+      const myEmail = (req.user.email || '').toLowerCase();
+      const signReq = await SignRequest.findOne({
+        documentId: req.params.id,
+        signerEmail: new RegExp(`^${myEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+      }).lean();
+      if (!signReq) {
+        return res.status(404).json({ error: 'Document not found' });
+      }
+      doc = await Document.findOne({ _id: req.params.id, status: { $ne: 'deleted' } }).lean();
+    }
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const url = await getDocumentViewUrl(doc, baseUrl);
+    if (!url) {
+      return res.status(404).json({ error: 'Document file not found' });
+    }
+    res.json({ url });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -329,10 +380,11 @@ router.post('/:id/send', requireAuth, async (req, res) => {
       signReqs = signReqs.filter((sr) => (sr.order ?? 0) === minOrder && !sr.emailSentAt);
     }
 
+    // When signing order is off, send to all signers so everyone receives at the same time (including owner if they're a signer)
     const ownerEmail = (req.user.email || '').toLowerCase();
     for (const sr of signReqs) {
       const isOwnerSigner = (sr.signerEmail || '').toLowerCase() === ownerEmail;
-      if (!isOwnerSigner) {
+      if (!isOwnerSigner || !doc.signingOrder) {
         try {
           await sendDocuSignStyleSignEmail({
             signerEmail: sr.signerEmail,
@@ -489,8 +541,15 @@ router.delete('/:id/pages/:pageIndex', requireAuth, async (req, res) => {
     if (!Number.isInteger(pageIndex) || pageIndex < 1) {
       return res.status(400).json({ error: 'Invalid page index' });
     }
-    const pdfPath = path.join(uploadDir, doc.originalFilePath);
-    const pdfBytes = await fs.readFile(pdfPath);
+
+    let pdfBytes;
+    const useStorage = doc.originalKey && storageService.isStorageConfigured();
+    if (useStorage) {
+      pdfBytes = await storageService.download(doc.originalKey);
+    } else {
+      pdfBytes = await fs.readFile(path.join(uploadDir, doc.originalFilePath));
+    }
+
     const pdfDoc = await PDFDocument.load(pdfBytes);
     const totalPages = pdfDoc.getPageCount();
     if (pageIndex > totalPages) {
@@ -501,7 +560,13 @@ router.delete('/:id/pages/:pageIndex', requireAuth, async (req, res) => {
     }
     pdfDoc.removePage(pageIndex - 1);
     const newBytes = await pdfDoc.save();
-    await fs.writeFile(pdfPath, newBytes);
+    const outBuffer = Buffer.from(newBytes);
+
+    if (useStorage) {
+      await storageService.upload(doc.originalKey, outBuffer);
+    } else {
+      await fs.writeFile(path.join(uploadDir, doc.originalFilePath), outBuffer);
+    }
     res.json({ success: true, pageCount: totalPages - 1 });
   } catch (err) {
     console.error(err);

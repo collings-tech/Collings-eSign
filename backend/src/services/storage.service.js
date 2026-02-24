@@ -1,19 +1,93 @@
-const path = require('path');
-const fs = require('fs');
-const { uploadDir } = require('../config/env');
+/**
+ * Supabase Storage for document PDFs.
+ * Bucket layout: documents/{docId}/original.pdf, documents/{docId}/signed.pdf
+ * MongoDB holds the keys (originalKey, signedKey); we never rename files on storage.
+ */
+const { createClient } = require('@supabase/supabase-js');
 
-function getDocumentPath(filename) {
-  return path.join(uploadDir, filename);
+const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'documents';
+const SIGNED_URL_EXPIRY_SECONDS = 5 * 60; // 5 minutes
+
+function getSupabase() {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+  if (!url || !key) {
+    throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_ANON_KEY) are required for storage');
+  }
+  return createClient(url, key);
 }
 
-function ensureUploadDir() {
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  }
+function isStorageConfigured() {
+  return !!(process.env.SUPABASE_URL && (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY));
+}
+
+/**
+ * Upload a buffer to storage at the given key.
+ * @param {string} key - e.g. "documents/23408874012413/original.pdf"
+ * @param {Buffer} buffer
+ * @returns {Promise<{ key: string }>}
+ */
+async function upload(key, buffer) {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .upload(key, buffer, {
+      contentType: 'application/pdf',
+      upsert: true,
+    });
+  if (error) throw new Error(`Storage upload failed: ${error.message}`);
+  return { key: data.path };
+}
+
+/**
+ * Download file from storage to a Buffer.
+ * @param {string} key - storage key
+ * @returns {Promise<Buffer>}
+ */
+async function download(key) {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.storage.from(BUCKET).download(key);
+  if (error) throw new Error(`Storage download failed: ${error.message}`);
+  const arrayBuffer = await data.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+/**
+ * Create a signed URL for viewing/downloading (expires in 5 mins by default).
+ * @param {string} key - storage key
+ * @param {number} [expiresInSeconds=300]
+ * @returns {Promise<string>} signed URL
+ */
+async function getSignedUrl(key, expiresInSeconds = SIGNED_URL_EXPIRY_SECONDS) {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrl(key, expiresInSeconds);
+  if (error) throw new Error(`Storage signed URL failed: ${error.message}`);
+  return data.signedUrl;
+}
+
+/**
+ * Build storage key for original PDF (do not upload with a different name; use this key).
+ */
+function originalKey(docId) {
+  return `documents/${docId}/original.pdf`;
+}
+
+/**
+ * Build storage key for signed PDF.
+ */
+function signedKey(docId) {
+  return `documents/${docId}/signed.pdf`;
 }
 
 module.exports = {
-  getDocumentPath,
-  ensureUploadDir,
+  isStorageConfigured,
+  upload,
+  download,
+  getSignedUrl,
+  originalKey,
+  signedKey,
+  BUCKET,
+  SIGNED_URL_EXPIRY_SECONDS,
 };
-

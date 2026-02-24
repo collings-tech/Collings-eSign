@@ -225,7 +225,15 @@ export default function NewAgreementPage() {
         if (cancelled) return;
         const doc = docRes.data;
         const signers = signRes.data || [];
-        const fileUrl = `${API_BASE}/uploads/${doc.originalFilePath}`;
+        let fileUrl = null;
+        if (doc.originalKey || doc.originalFilePath) {
+          try {
+            const urlRes = await apiClient.get(`/documents/${doc._id}/file-url`);
+            if (urlRes.data?.url) fileUrl = urlRes.data.url;
+          } catch {
+            fileUrl = doc.originalFilePath ? `${API_BASE}/uploads/${doc.originalFilePath}` : null;
+          }
+        }
         setExistingDocument({
           id: doc._id,
           title: doc.title || "Document",
@@ -360,7 +368,33 @@ export default function NewAgreementPage() {
     setError("");
     if (!canSubmit) return;
     if (editDocumentId && existingDocument) {
-      navigate(`/documents/${editDocumentId}`);
+      setLoading(true);
+      try {
+        const signRes = await apiClient.get(`/sign-requests/${editDocumentId}`);
+        const existingSigners = signRes.data || [];
+        const existingEmails = new Set(existingSigners.map((sr) => (sr.signerEmail || "").toLowerCase().trim()));
+        const signerRecipients = recipients.filter((r) => r.role === "signer" && r.name?.trim() && r.email?.trim());
+        for (let i = 0; i < signerRecipients.length; i++) {
+          const r = signerRecipients[i];
+          const email = r.email.trim().toLowerCase();
+          if (!existingEmails.has(email)) {
+            await apiClient.post(`/sign-requests/${editDocumentId}`, {
+              signerEmail: r.email.trim(),
+              signerName: r.name.trim(),
+              skipEmail: true,
+              keepDraft: true,
+              order: signingOrder ? (r.order ?? i + 1) : i + 1,
+            });
+            existingEmails.add(email);
+          }
+        }
+        navigate(`/documents/${editDocumentId}`, { state: { openPrepare: true } });
+      } catch (err) {
+        console.error(err);
+        setError(err.response?.data?.error || "Failed to add recipients");
+      } finally {
+        setLoading(false);
+      }
       return;
     }
     if (onlySigner && recipients.length > 1) {
