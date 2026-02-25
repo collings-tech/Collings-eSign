@@ -251,7 +251,7 @@ export default function DocumentDetailPage() {
       pageEls = [firstPage];
     }
     const overlayRect = overlay.getBoundingClientRect();
-    const scale = zoom / 200;
+    const scale = zoom / 100;
     const pages = [];
     for (let i = 0; i < pageEls.length; i++) {
       const el = pageEls[i];
@@ -380,7 +380,7 @@ export default function DocumentDetailPage() {
     const hasSize = contentSize.width > 0 && contentSize.height > 0;
     if (!hasSize || !docCanvasRef.current) return;
     const canvas = docCanvasRef.current;
-    const scale = zoom / 200;
+    const scale = zoom / 100;
     const wrapW = Math.round(contentSize.width * scale);
     const wrapH = Math.round(contentSize.height * scale);
     const centerScroll = () => {
@@ -451,6 +451,23 @@ export default function DocumentDetailPage() {
     setSelectedFieldId((current) => (current === fieldId ? null : current));
   }, []);
 
+  /** Check if a field's center is within any document page */
+  const isFieldInDocumentArea = useCallback((field, measurement) => {
+    if (!measurement?.pages?.length) return true;
+    const w = field.width ?? 110;
+    const h = field.height ?? 55;
+    const cx = (field.x ?? 0) + w / 2;
+    const cy = (field.y ?? 0) + h / 2;
+    for (const p of measurement.pages) {
+      const pageH = p.pageRenderHeight ?? p.pageRenderWidth;
+      if (cx >= p.offsetX && cx <= p.offsetX + p.pageRenderWidth &&
+          cy >= p.offsetY && cy <= p.offsetY + pageH) {
+        return true;
+      }
+    }
+    return false;
+  }, []);
+
   const overlayRef = useRef(null);
 
   /** Convert client coords to overlay-relative coords and resolve page number */
@@ -458,7 +475,7 @@ export default function DocumentDetailPage() {
     const overlay = overlayRef.current;
     if (!overlay) return null;
     const overlayRect = overlay.getBoundingClientRect();
-    const scale = zoom / 200;
+    const scale = zoom / 100;
     const x = (clientX - overlayRect.left) / scale;
     const y = (clientY - overlayRect.top) / scale;
     const measurement = getPagePlacementMeasurement();
@@ -488,7 +505,7 @@ export default function DocumentDetailPage() {
       const inBounds = e.clientX >= rect.left && e.clientX <= rect.right &&
         e.clientY >= rect.top && e.clientY <= rect.bottom;
       if (inBounds) {
-        const scale = zoom / 200;
+        const scale = zoom / 100;
         setCursorOverlayPos({
           x: (e.clientX - rect.left) / scale,
           y: (e.clientY - rect.top) / scale,
@@ -517,10 +534,14 @@ export default function DocumentDetailPage() {
     if (e.target.closest?.(".prepare-placed-field")) return;
     const coords = clientToOverlayCoords(e.clientX, e.clientY);
     if (!coords) return;
-    e.preventDefault();
-    e.stopPropagation();
     const w = pendingFieldWidth;
     const h = pendingFieldHeight;
+    const measurement = getPagePlacementMeasurement();
+    if (measurement?.pages?.length && !isFieldInDocumentArea({ x: coords.x - w / 2, y: coords.y - h / 2, width: w, height: h }, measurement)) {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
     addField(pendingFieldType, {
       x: coords.x - w / 2,
       y: coords.y - h / 2,
@@ -528,7 +549,7 @@ export default function DocumentDetailPage() {
     });
     setPendingFieldType(null);
     setCursorOverlayPos(null);
-  }, [pendingFieldType, addField, clientToOverlayCoords, pendingFieldWidth, pendingFieldHeight]);
+  }, [pendingFieldType, addField, clientToOverlayCoords, getPagePlacementMeasurement, isFieldInDocumentArea, pendingFieldWidth, pendingFieldHeight]);
 
   const handleFieldPointerDown = useCallback((e, field) => {
     if (e.button !== 0) return;
@@ -553,7 +574,7 @@ export default function DocumentDetailPage() {
     if (!draggingFieldId) return;
     const handlePointerMove = (e) => {
       const { fieldX, fieldY, fieldW, fieldH, clientX, clientY } = dragStartRef.current;
-      const scale = zoom / 200;
+      const scale = zoom / 100;
       const dx = (e.clientX - clientX) / scale;
       const dy = (e.clientY - clientY) / scale;
       const newX = Math.max(0, fieldX + dx);
@@ -572,15 +593,21 @@ export default function DocumentDetailPage() {
       const target = dragTargetRef.current;
       const { fieldX, fieldY, fieldW, fieldH } = dragStartRef.current;
       const measurement = getPagePlacementMeasurement();
+      const fieldAtDrop = { x: fieldX, y: fieldY, width: fieldW, height: fieldH };
       if (measurement?.pages?.length && fieldW != null && fieldH != null) {
         const cx = fieldX + fieldW / 2;
         const cy = fieldY + fieldH / 2;
+        let foundPage = false;
         for (const p of measurement.pages) {
           if (cx >= p.offsetX && cx <= p.offsetX + p.pageRenderWidth &&
               cy >= p.offsetY && cy <= p.offsetY + (p.pageRenderHeight ?? p.pageRenderWidth)) {
             updateField(draggingFieldId, { page: p.pageNum });
+            foundPage = true;
             break;
           }
+        }
+        if (!foundPage) {
+          removeField(draggingFieldId);
         }
       }
       if (target?.releasePointerCapture && e.pointerId !== undefined) {
@@ -621,7 +648,7 @@ export default function DocumentDetailPage() {
     const { minW, maxW, minH, maxH } = FIELD_SIZE_LIMITS;
     const handlePointerMove = (e) => {
       const { x, y, w, h, clientX, clientY } = resizeStartRef.current;
-      const scale = zoom / 200;
+      const scale = zoom / 100;
       const dx = (e.clientX - clientX) / scale;
       const dy = (e.clientY - clientY) / scale;
       let newX = x, newY = y, newW = w, newH = h;
@@ -645,6 +672,12 @@ export default function DocumentDetailPage() {
       resizeStartRef.current = { x: newX, y: newY, w: newW, h: newH, clientX: e.clientX, clientY: e.clientY };
     };
     const handlePointerUp = () => {
+      const fid = resizingFieldId;
+      const { x, y, w, h } = resizeStartRef.current;
+      const measurement = getPagePlacementMeasurement();
+      if (measurement?.pages?.length && !isFieldInDocumentArea({ x, y, width: w, height: h }, measurement)) {
+        removeField(fid);
+      }
       setResizingFieldId(null);
       setResizeHandle(null);
     };
@@ -654,7 +687,7 @@ export default function DocumentDetailPage() {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [resizingFieldId, resizeHandle, updateField, zoom]);
+  }, [resizingFieldId, resizeHandle, updateField, removeField, zoom, getPagePlacementMeasurement, isFieldInDocumentArea]);
 
   const handleAddSigner = async (e) => {
     e.preventDefault();
@@ -881,7 +914,7 @@ export default function DocumentDetailPage() {
   const allSigned = doc.status === "completed" || signers.every((s) => s.status === "signed");
 
   const selectedField = placedFields.find((f) => f.id === selectedFieldId);
-  const scale = zoom / 200;
+  const scale = zoom / 100;
   const hasSize = contentSize.width > 0 && contentSize.height > 0;
   const wrapWidth = hasSize ? Math.round(contentSize.width * scale) : undefined;
   const wrapHeight = hasSize ? Math.round(contentSize.height * scale) : undefined;
@@ -1268,7 +1301,7 @@ export default function DocumentDetailPage() {
                   className="prepare-pdf-inner"
                   style={{
                     transform: `scale(${scale})`,
-                    transformOrigin: "center center",
+                    transformOrigin: "0 0",
                   }}
                 >
                   <div className="prepare-pdf-wrap">
