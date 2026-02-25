@@ -79,6 +79,11 @@
 
   color: var(--color-text);
   background-color: var(--color-bg-page);
+
+  /* Responsive breakpoints */
+  --bp-tablet: 1024px;
+  --bp-mobile: 768px;
+  --bp-sm: 480px;
 }
 
 /* Theme: to change colors app-wide, edit the variables above (e.g. --color-accent, --color-text, --color-bg-hover). Keep --color-bg-hover dark enough that --color-text stays visible on hover. */
@@ -2076,6 +2081,17 @@ body.top-sidebar-open .top-sidebar {
   color: var(--color-text);
 }
 
+.prepare-field-btn.selected {
+  background: var(--color-blue);
+  border-color: var(--color-blue);
+  color: white;
+}
+
+.prepare-field-btn.selected:hover {
+  background: var(--color-blue);
+  opacity: 0.95;
+}
+
 .prepare-field-icon {
   font-size: 1rem;
   opacity: 0.85;
@@ -2156,6 +2172,29 @@ body.top-sidebar-open .top-sidebar {
   pointer-events: auto;
 }
 
+.prepare-fields-dropzone {
+  position: absolute;
+  inset: 0;
+  cursor: crosshair;
+  z-index: 1;
+}
+
+.prepare-field-ghost {
+  position: absolute;
+  border: 2px dashed var(--color-blue);
+  background: rgba(239, 246, 255, 0.85);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 0.5rem;
+  font-size: 0.8rem;
+  color: var(--color-blue);
+  box-sizing: border-box;
+  z-index: 5;
+  transition: none;
+}
+
 .prepare-placed-field {
   position: absolute;
   border: 2px solid rgba(59, 130, 246, 0.5);
@@ -2208,6 +2247,7 @@ body.top-sidebar-open .top-sidebar {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: #000000;
 }
 
 /* 8 resize handles (corners + edges) */
@@ -2340,6 +2380,234 @@ body.top-sidebar-open .top-sidebar {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
+}
+
+.prepare-property-hint {
+  margin: 0 0 0.25rem;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.prepare-property-option-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.prepare-property-option-input {
+  flex: 1;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  width: 100%;
+}
+
+.prepare-property-option-remove {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-card);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+.prepare-property-option-remove:hover {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+  border-color: var(--color-danger-border);
+}
+
+.prepare-property-add-option {
+  padding: 0.4rem 0.6rem;
+  border: 1px dashed var(--color-border);
+  background: transparent;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  color: var(--color-blue);
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.prepare-property-add-option:hover {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: var(--color-blue);
+}
+
+.prepare-property-default-option {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.prepare-property-default-option .prepare-property-select {
+  width: 100%;
+}
+
+.prepare-property-row-inline {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.prepare-property-row-inline .prepare-property-select-narrow {
+  width: 4.5rem;
+}
+
+.prepare-property-style-btns {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.prepare-property-style-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-card);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+}
+
+.prepare-property-style-btn:hover {
+  background: var(--color-bg-nav);
+}
+
+.prepare-property-style-btn.active {
+  background: var(--color-blue);
+  color: white;
+  border-color: var(--color-blue);
+}
+
+.prepare-property-edit-values {
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--color-blue);
+  background: var(--color-blue);
+  color: white;
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.prepare-property-edit-values:hover {
+  opacity: 0.9;
+}
+
+/* Edit Values modal */
+.prepare-edit-values-modal {
+  background: var(--color-bg-card);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  max-width: 480px;
+  width: 90vw;
+  padding: 1.25rem;
+}
+
+.prepare-edit-values-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.prepare-edit-values-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.prepare-edit-values-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 1.1rem;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  border-radius: var(--radius);
+}
+
+.prepare-edit-values-close:hover {
+  background: var(--color-bg-nav);
+  color: var(--color-text);
+}
+
+.prepare-edit-values-hint {
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.prepare-edit-values-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.prepare-edit-values-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 32px;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.prepare-edit-values-header-row {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+}
+
+.prepare-edit-values-col-remove {
+  width: 32px;
+}
+
+.prepare-edit-values-input {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  font-size: 0.85rem;
+}
+
+.prepare-edit-values-remove {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-card);
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  cursor: pointer;
+  color: var(--color-text-muted);
+}
+
+.prepare-edit-values-remove:hover {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+.prepare-edit-values-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
 }
 
 .prepare-property-actions {
@@ -3426,6 +3694,42 @@ body.top-sidebar-open .top-sidebar {
   color: var(--color-text-inverse);
 }
 
+.signing-pdf-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  min-height: 280px;
+  padding: 2rem;
+  text-align: center;
+  background: #f8fafc;
+  border-radius: 8px;
+  margin: 1rem;
+}
+
+.signing-pdf-error-text {
+  margin: 0;
+  color: #475569;
+  font-size: 0.95rem;
+}
+
+.signing-pdf-error-retry {
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  background: #7c3aed;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.signing-pdf-error-retry:hover {
+  background: #6d28d9;
+}
+
 .signing-expired-page {
   align-items: center;
   justify-content: center;
@@ -3470,13 +3774,50 @@ body.top-sidebar-open .top-sidebar {
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem 1.25rem;
-  background: #312e81;
+  background: #1a3d4d;
   color: var(--color-text-inverse);
+  gap: 1rem;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
-.signing-review-header-left { flex-shrink: 0; }
-.signing-review-header-center { flex: 1; text-align: center; min-width: 0; }
-.signing-review-header-right { display: flex; align-items: center; gap: 0.5rem; flex-shrink: 0; }
+.signing-review-header-left {
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  order: 0;
+}
+
+.signing-review-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}
+
+.signing-review-logo {
+  height: 22px;
+  width: auto;
+  display: block;
+  filter: brightness(0) invert(1);
+}
+
+.signing-review-brand-esign {
+  font-size: 0.95em;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.signing-review-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  min-width: 0;
+}
 
 .signing-review-title {
   font-size: 1rem;
@@ -3485,7 +3826,7 @@ body.top-sidebar-open .top-sidebar {
 
 .signing-envelope-id {
   font-size: 0.8rem;
-  opacity: 0.9;
+  opacity: 0.95;
   word-break: break-all;
 }
 
@@ -3621,6 +3962,21 @@ body.top-sidebar-open .top-sidebar {
   font-weight: 600;
   color: var(--color-text);
 }
+.signing-completed-download {
+  display: inline-block;
+  margin: 0 0.5rem 1rem 0;
+  padding: 0.5rem 1.25rem;
+  background: #059669;
+  color: #fff;
+  border-radius: 8px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+.signing-completed-download:hover {
+  background: #047857;
+  color: #fff;
+}
 .signing-completed-dismiss {
   padding: 0.5rem 1.25rem;
   background: #5b21b6;
@@ -3638,6 +3994,7 @@ body.top-sidebar-open .top-sidebar {
   flex: 1;
   min-height: 0;
   display: flex;
+  flex-direction: column;
   background: #f8fafc;
   position: relative;
   padding-top: 52px;
@@ -3650,7 +4007,7 @@ body.top-sidebar-open .top-sidebar {
   right: 0;
   z-index: 1000;
   flex-shrink: 0;
-  height: 52px;
+  min-height: 52px;
   box-sizing: border-box;
 }
 
@@ -3663,27 +4020,13 @@ body.top-sidebar-open .top-sidebar {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  margin-right: 88px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
 }
 
 .signing-review-sidebar {
-  position: fixed;
-  right: 0;
-  top: 52px;
-  bottom: 0;
-  width: 88px;
-  z-index: 5;
-  flex-shrink: 0;
-  background: var(--color-text-secondary);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 0.75rem 0;
-  gap: 0.35rem;
-  overflow: hidden;
+  display: none;
 }
 
 .signing-doc-canvas {
@@ -3696,33 +4039,51 @@ body.top-sidebar-open .top-sidebar {
   box-shadow: 0 4px 20px rgba(0,0,0,0.08);
   z-index: 0;
   overflow: auto;
+  overflow-anchor: auto;
+  padding: 0;
 }
 
 .signing-pdf-wrap {
   position: relative;
   display: flex;
   justify-content: center;
-  align-items: center;
+  align-items: flex-start;
   overflow: visible;
-  min-width: 100%;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  width: 100% !important;
   min-height: 100%;
+  box-sizing: border-box;
 }
 
 .signing-pdf-inner {
   position: relative;
-  width: fit-content;
-  height: fit-content;
-  min-height: 600px;
+  width: 100%;
+  max-width: 100%;
+  min-height: 400px;
   overflow: visible;
   flex-shrink: 0;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
 .signing-pdf-wrap .pdf-viewer {
   position: relative;
   z-index: 1;
-  width: 800px;
+  width: 100%;
   max-width: 100%;
   display: block;
+  margin-top: 0;
+}
+
+.signing-pdf-wrap .pdf-viewer [class*="rpv-core"] {
+  max-width: 100%;
+}
+
+.signing-pdf-wrap .rpv-core__inner-page,
+.signing-pdf-wrap .rpv-core__page-layer {
+  max-width: 100%;
 }
 
 /* Overlay must sit on top of PDF so placeholder is always visible */
@@ -3744,6 +4105,91 @@ body.top-sidebar-open .top-sidebar {
   pointer-events: auto;
 }
 
+/* Typable text fields: name, email, company, title, text, number – normal font */
+.signing-field-text-block {
+  position: relative;
+  background: rgba(255,255,255,0.7);
+  border: 1px solid #c4b5fd;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  padding: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+/* Hidden span used to measure text width so the field can grow with content */
+.signing-field-text-measure {
+  position: absolute;
+  left: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: pre;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.875rem;
+  font-weight: 400;
+  padding: 0.25rem 0.5rem;
+  box-sizing: border-box;
+}
+
+.signing-field-text-input {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: 0.25rem 0.5rem;
+  border: none;
+  border-radius: 4px;
+  font: inherit;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 0.875rem;
+  font-weight: 400;
+  color: #1f2937;
+  background: transparent;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.signing-field-text-input::placeholder {
+  color: #9ca3af;
+}
+
+.signing-field-text-input:focus {
+  outline: 2px solid #7c3aed;
+  outline-offset: -2px;
+}
+
+.signing-field-readonly .signing-field-text-input,
+.signing-field-text-input:disabled,
+.signing-field-text-input[readonly] {
+  background: #f3f4f6;
+  cursor: not-allowed;
+  color: #4b5563;
+}
+
+.signing-field-dropdown-block {
+  background: rgba(255,255,255,0.9);
+  border: 1px solid #c4b5fd;
+  border-radius: 4px;
+}
+
+.signing-field-dropdown-select {
+  width: 100%;
+  height: 100%;
+  min-height: 24px;
+  padding: 0.25rem 0.5rem;
+  border: none;
+  background: transparent;
+  font-size: 0.85rem;
+  color: #1f2937;
+  appearance: auto;
+  cursor: pointer;
+}
+
+.signing-field-dropdown-select:focus {
+  outline: 2px solid #7c3aed;
+  outline-offset: -2px;
+}
+
 /* Unsigned: purple box with "Sign" + pencil – always visible */
 .signing-field-block.unsigned {
   background: #5b21b6;
@@ -3759,7 +4205,7 @@ body.top-sidebar-open .top-sidebar {
   height: 100%;
   padding: 0 0.6rem;
   border: none;
-  background: #5b21b6;
+  background: var(--color-accent);
   color: var(--color-text-inverse);
   font-weight: 700;
   font-size: 0.95rem;
@@ -3946,28 +4392,103 @@ body.top-sidebar-open .top-sidebar {
   font-weight: 600;
 }
 
+/* Fixed zoom in bottom-right corner */
+.signing-zoom-fixed {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 100;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(26, 61, 77, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 2rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(8px);
+}
+
+.signing-zoom-fixed .signing-zoom-btn {
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--color-text-inverse);
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.signing-zoom-fixed .signing-zoom-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.signing-zoom-fixed .signing-zoom-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.signing-zoom-fixed .signing-zoom-value {
+  font-size: 0.8rem;
+  color: var(--color-text-inverse);
+  min-width: 2.5rem;
+  text-align: center;
+  font-weight: 600;
+}
+
 .signing-review-footer {
   flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.5rem 1rem;
-  background: #312e81;
-  color: var(--color-purple-tint-strong);
-  font-size: 0.75rem;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.6rem 1.25rem;
+  background: #1a3d4d;
+  color: var(--color-text-inverse);
+  font-size: 0.8rem;
+  z-index: 10;
+  position: relative;
 }
 
-.signing-footer-brand { font-weight: 500; }
-.signing-footer-center { display: flex; align-items: center; gap: 0.75rem; }
-.signing-footer-center a { color: var(--color-purple-tint-strong); }
+.signing-footer-brand {
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.signing-footer-center {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem 1rem;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.signing-footer-center a {
+  color: var(--color-text-inverse);
+  white-space: nowrap;
+}
+
 .signing-footer-lang {
   background: transparent;
   border: none;
-  color: var(--color-purple-tint-strong);
-  font-size: 0.75rem;
+  color: var(--color-text-inverse);
+  font-size: 0.8rem;
   cursor: pointer;
 }
-.signing-footer-copy { opacity: 0.8; }
+
+.signing-footer-copy {
+  opacity: 0.9;
+  flex-shrink: 0;
+}
 
 /* Adopt Signature Modal */
 .adopt-modal-backdrop {
@@ -6146,7 +6667,226 @@ body.top-sidebar-open .top-sidebar {
   background: var(--color-bg-hover);
 }
 
+/* ========== Responsive: Tablet (768px) ========== */
 @media (max-width: 768px) {
+  .auth-container {
+    padding: 1.25rem 0.75rem;
+  }
+
+  .auth-card {
+    padding: 1.75rem 1.25rem;
+    max-width: 100%;
+  }
+
+  .auth-card h1 {
+    font-size: 1.5rem;
+  }
+
+  .auth-form input,
+  .auth-form input[type="file"] {
+    padding: 0.55rem 0.75rem;
+  }
+
+  .dashboard-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ds-hero {
+    padding: 1.5rem 1.25rem;
+  }
+
+  .ds-hero h1 {
+    font-size: 1.6rem;
+  }
+
+  .ds-section {
+    padding: 1.25rem 1rem;
+  }
+
+  .agreements-content {
+    overflow-x: visible;
+  }
+
+  .agreements-table-head {
+    display: none;
+  }
+
+  .agreements-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .agreements-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.75rem 1rem;
+    padding: 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-bg-card);
+    min-height: auto;
+    align-items: start;
+  }
+
+  .agreements-row.muted {
+    padding: 1rem;
+    border-color: var(--color-border);
+    background: var(--color-bg-subtle);
+    grid-template-columns: 1fr;
+  }
+
+  .agreements-col-select {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: center;
+  }
+
+  .agreements-col-select input[type="checkbox"] {
+    width: 1.125rem;
+    height: 1.125rem;
+    margin: 0;
+    cursor: pointer;
+  }
+
+  .agreements-col-name {
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+  }
+
+  .agreements-col-status {
+    grid-column: 1 / -1;
+  }
+
+  .agreements-col-status::before {
+    content: "Status";
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.25rem;
+  }
+
+  .agreements-col-last {
+    grid-column: 1 / -1;
+  }
+
+  .agreements-col-last::before {
+    content: "Last change";
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.25rem;
+  }
+
+  .agreements-col-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .agreements-row .agreements-actions-group {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .agreements-row .agreements-action-primary,
+  .agreements-row .agreements-action-secondary {
+    min-width: auto;
+    width: auto;
+    flex-shrink: 0;
+  }
+
+  .signing-review-header {
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+    padding: 0.75rem 1rem;
+  }
+
+  .signing-review-header-left {
+    order: 0;
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+  }
+
+  .signing-review-header-right {
+    margin-left: auto;
+  }
+
+  .signing-review-title {
+    white-space: normal;
+    line-height: 1.3;
+  }
+
+  .signing-review-body {
+    padding-top: 72px;
+  }
+
+  .signing-review-main {
+    margin-right: 0;
+  }
+
+  .signing-doc-canvas {
+    overflow-x: auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .signing-pdf-wrap {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    width: 100% !important;
+  }
+
+  .signing-pdf-inner {
+    width: 100%;
+    max-width: 100%;
+    min-height: 400px;
+    box-sizing: border-box;
+  }
+
+  .signing-pdf-wrap .pdf-viewer {
+    width: 100% !important;
+    max-width: 100%;
+  }
+
+  .signing-pdf-wrap .pdf-viewer [class*="rpv-core"] {
+    max-width: 100%;
+  }
+
+  .signing-pdf-wrap .rpv-core__inner-page,
+  .signing-pdf-wrap .rpv-core__page-layer {
+    max-width: 100% !important;
+  }
+
+  .signing-envelope-id {
+    word-break: break-all;
+    overflow-wrap: break-word;
+  }
+
+  .signing-review-footer {
+    padding: 0.6rem 1rem;
+    gap: 0.5rem;
+  }
+
+  .signing-review-body {
+    flex-direction: column;
+  }
+
+  .doc-detail-action-row {
+    flex-wrap: wrap;
+  }
+
+  .top-main {
+    padding: 1rem 0.75rem 1.5rem;
+  }
+
   .profile-body {
     grid-template-columns: 1fr;
     padding: 1.5rem 1rem 2rem;
@@ -6164,5 +6904,143 @@ body.top-sidebar-open .top-sidebar {
 
   .profile-nav-link {
     padding: 0.4rem 0.75rem;
+  }
+}
+
+/* ========== Responsive: Mobile (480px) ========== */
+@media (max-width: 480px) {
+  .auth-container {
+    padding: 1rem 0.5rem;
+  }
+
+  .auth-card {
+    padding: 1.5rem 1rem;
+  }
+
+  .auth-card h1 {
+    font-size: 1.35rem;
+  }
+
+  .dashboard-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .ds-hero {
+    padding: 1.25rem 1rem;
+  }
+
+  .ds-hero h1 {
+    font-size: 1.4rem;
+  }
+
+  .ds-hero p {
+    font-size: 0.9375rem;
+  }
+
+  .dashboard-hero-actions.tight {
+    flex-wrap: wrap;
+  }
+
+  .hero-cta-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .top-header {
+    padding-inline: 0.5rem;
+  }
+
+  .top-header-user-trigger .user-meta {
+    display: none;
+  }
+
+  .agreements-action-primary,
+  .agreements-action-secondary {
+    min-width: auto;
+    width: auto;
+    padding: 0.5rem 0.875rem;
+    white-space: nowrap;
+  }
+
+  .agreements-action-menu.agreements-action,
+  .agreements-action-menu {
+    min-width: 2.25rem;
+    width: 2.25rem;
+    flex-shrink: 0;
+  }
+
+  .agreements-controls {
+    gap: 0.5rem;
+  }
+
+  .signing-review-header {
+    padding: 0.6rem 0.75rem;
+  }
+
+  .signing-review-body {
+    padding-top: 80px;
+  }
+
+  .signing-review-logo {
+    height: 18px;
+  }
+
+  .signing-review-title {
+    font-size: 0.9rem;
+  }
+
+  .signing-envelope-id {
+    font-size: 0.75rem;
+  }
+
+  .signing-doc-canvas {
+    padding: 0 0.5rem;
+  }
+
+  .signing-zoom-fixed {
+    bottom: 0.75rem;
+    right: 0.75rem;
+    padding: 0.4rem 0.6rem;
+  }
+
+  .signing-expired-card {
+    margin: 1rem;
+    padding: 1.5rem 1.25rem;
+  }
+
+  .prepare-send-warning-modal {
+    margin: 0.75rem;
+    padding: 1.25rem;
+  }
+
+  .doc-detail-main,
+  .doc-detail-sidebar section {
+    padding: 0.75rem;
+  }
+
+  .new-agreement-header,
+  .new-agreement-body {
+    padding: 0.75rem 1rem;
+  }
+
+  .new-agreement-fab {
+    right: 0.75rem;
+    bottom: 1rem;
+  }
+
+  .profile-manage-page {
+    padding: 1rem 0;
+  }
+
+  .profile-manage-form {
+    padding: 1.25rem;
+  }
+
+  .profile-section {
+    padding: 1rem 1.25rem;
+  }
+
+  .profile-title {
+    font-size: 1.5rem;
   }
 }

@@ -1,7 +1,7 @@
 const express = require('express');
 const SignRequest = require('../models/SignRequest');
 const Document = require('../models/Document');
-const { saveSignatureOnly, completeSigning } = require('../services/signing.service');
+const { saveSignatureOnly, saveFieldValue, completeSigning } = require('../services/signing.service');
 const AuditLog = require('../models/AuditLog');
 const { logEvent } = require('../services/audit.service');
 const storageService = require('../services/storage.service');
@@ -102,6 +102,8 @@ router.get('/:token', async (req, res) => {
         status: signReq.status,
         signatureFields: signReq.signatureFields,
         ...(signReq.signatureData ? { signatureData: signReq.signatureData } : {}),
+        ...(signReq.fieldSignatureData && Object.keys(signReq.fieldSignatureData).length > 0 ? { fieldSignatureData: signReq.fieldSignatureData } : {}),
+        ...(signReq.fieldValues && Object.keys(signReq.fieldValues).length > 0 ? { fieldValues: signReq.fieldValues } : {}),
       },
     });
   } catch (err) {
@@ -111,10 +113,11 @@ router.get('/:token', async (req, res) => {
 });
 
 // Public: submit signature (saves signature only; recipient is not marked signed until they click Complete)
+// If fieldId is provided, stores signature for that field only (per-field signing).
 router.post('/:token/sign', async (req, res) => {
   try {
     const { token } = req.params;
-    const { signatureData } = req.body;
+    const { signatureData, fieldId } = req.body;
     if (!signatureData) {
       return res.status(400).json({ error: 'Signature data is required' });
     }
@@ -125,7 +128,33 @@ router.post('/:token/sign', async (req, res) => {
     if (isSignLinkExpired(existing)) {
       return res.status(410).json({ error: 'This link has expired', code: 'LINK_EXPIRED' });
     }
-    const signReq = await saveSignatureOnly({ token, signatureData });
+    const signReq = await saveSignatureOnly({ token, signatureData, fieldId });
+    if (!signReq) {
+      return res.status(404).json({ error: 'Sign request not found' });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Public: save a typed field value (name, email, company, title, text, number)
+router.patch('/:token/field-value', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { fieldId, value } = req.body;
+    if (fieldId == null || fieldId === '') {
+      return res.status(400).json({ error: 'fieldId is required' });
+    }
+    const existing = await SignRequest.findOne({ signLinkToken: token }).lean();
+    if (!existing) {
+      return res.status(404).json({ error: 'Sign request not found' });
+    }
+    if (isSignLinkExpired(existing)) {
+      return res.status(410).json({ error: 'This link has expired', code: 'LINK_EXPIRED' });
+    }
+    const signReq = await saveFieldValue({ token, fieldId, value });
     if (!signReq) {
       return res.status(404).json({ error: 'Sign request not found' });
     }
@@ -150,8 +179,15 @@ router.post('/:token/complete', async (req, res) => {
     if (signReq.status === 'signed') {
       return res.json({ success: true });
     }
-    if (!signReq.signatureData) {
-      return res.status(400).json({ error: 'Sign the document first before completing' });
+    const sigFields = (signReq.signatureFields || []).filter((f) => {
+      const t = String(f.type || 'signature').toLowerCase();
+      return t === 'signature' || t === 'initial';
+    });
+    const hasPerField = signReq.fieldSignatureData && typeof signReq.fieldSignatureData === 'object' && Object.keys(signReq.fieldSignatureData).length > 0;
+    const allFieldsSigned = sigFields.length === 0 || (hasPerField && sigFields.every((f) => signReq.fieldSignatureData[f.id]));
+    const hasLegacy = !!signReq.signatureData;
+    if (!allFieldsSigned && !hasLegacy) {
+      return res.status(400).json({ error: 'Sign all required fields before completing' });
     }
     const ip =
       req.headers['x-forwarded-for'] ||

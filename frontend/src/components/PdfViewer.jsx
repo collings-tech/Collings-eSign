@@ -4,7 +4,7 @@ import '@react-pdf-viewer/core/lib/styles/index.css';
 const PDF_WORKER_URL =
   'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
-export default function PdfViewer({ fileUrl, currentPage, initialPage = 0 }) {
+export default function PdfViewer({ fileUrl, currentPage, initialPage = 0, fullWidth = false }) {
   const pageIndex = currentPage != null && currentPage >= 1 ? currentPage - 1 : initialPage;
   // Key by fileUrl + page so when user clicks a thumbnail we remount with the right initialPage
   // (avoids page-navigation plugin which was causing destroy/lifecycle errors)
@@ -13,7 +13,7 @@ export default function PdfViewer({ fileUrl, currentPage, initialPage = 0 }) {
   if (!fileUrl) return null;
 
   return (
-    <div className="pdf-viewer">
+    <div className={`pdf-viewer${fullWidth ? ' pdf-viewer-full-width' : ''}`} style={fullWidth ? { width: '100%', minWidth: 0 } : undefined}>
       <Worker workerUrl={PDF_WORKER_URL}>
         <Viewer
           key={viewerKey}

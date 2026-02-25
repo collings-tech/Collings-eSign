@@ -94,9 +94,19 @@ const FALLBACK_RENDER_WIDTH = 800;
  * @returns {Promise<string>} Storage key (e.g. documents/{docId}/signed.pdf) or local filename for doc.signedKey / doc.signedFilePath
  */
 async function embedSignatureInPdf(doc, signRequest) {
-  if (!signRequest.signatureData) {
+  const hasPerField = signRequest.fieldSignatureData && typeof signRequest.fieldSignatureData === "object" && Object.keys(signRequest.fieldSignatureData).length > 0;
+  const hasLegacy = !!signRequest.signatureData;
+  const hasFieldValues = signRequest.fieldValues && typeof signRequest.fieldValues === "object" && Object.keys(signRequest.fieldValues).length > 0;
+  const sigFields = (signRequest.signatureFields || []).filter((f) => {
+    const t = String(f.type || "signature").toLowerCase();
+    return t === "signature" || t === "initial";
+  });
+  const textFieldTypes = ["name", "email", "company", "title", "text", "number", "stamp", "date", "dropdown"];
+  const hasSigFields = sigFields.length > 0;
+  if (hasSigFields && !hasPerField && !hasLegacy) {
     throw new Error("No signature data to embed");
   }
+  /* When only text fields exist with no values yet, we still run and save PDF as-is */
 
   let pdfBytes;
   const useStorage = doc.originalKey && storageService.isStorageConfigured();
@@ -112,61 +122,66 @@ async function embedSignatureInPdf(doc, signRequest) {
   pdfDoc.registerFontkit(fontkit);
   const pages = pdfDoc.getPages();
 
-  const imageBuffer = await getSignatureImageBuffer(signRequest.signatureData);
-  let embeddedImage = null;
-  if (imageBuffer) {
-    try {
-      embeddedImage = await pdfDoc.embedPng(imageBuffer);
-    } catch {
-      try {
-        embeddedImage = await pdfDoc.embedJpg(imageBuffer);
-      } catch (err) {
-        console.error("[pdfSign] Failed to embed signature image", err.message);
-      }
-    }
-  }
-
-  const typedData = parseTypedSignature(signRequest.signatureData);
   const borderAsset = await embedBorderImage(pdfDoc);
-
-  let embeddedTypedFont = null;
-  if (typedData?.font && (SIGNATURE_FONT_FILES[typedData.font] || FONT_CDN_URLS[typedData.font])) {
-    try {
-      let fontBytes = null;
-      const fontPath = path.join(FONTS_DIR, SIGNATURE_FONT_FILES[typedData.font]);
-      try {
-        fontBytes = await fs.readFile(fontPath);
-      } catch {
-        const cdnUrl = FONT_CDN_URLS[typedData.font];
-        if (cdnUrl) {
-          const res = await fetch(cdnUrl);
-          if (res.ok) fontBytes = Buffer.from(await res.arrayBuffer());
-        }
-      }
-      if (fontBytes && fontBytes.length > 0) {
-        embeddedTypedFont = await pdfDoc.embedFont(fontBytes);
-      }
-    } catch (err) {
-      console.warn("[pdfSign] Custom font not loaded, using default:", typedData.font, err.message);
-    }
-  }
 
   const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
 
   let fields = signRequest.signatureFields || [];
-  if (fields.length === 0) {
+  if (fields.length === 0 && hasSigFields) {
     fields = [{ page: 1, x: 100, y: 400, width: 180, height: 36, type: "signature" }];
   }
   const sigFieldCount = fields.filter((f) => {
     const t = String(f.type || "signature").toLowerCase();
     return t === "signature" || t === "initial";
   }).length;
-  console.log("[pdfSign] Embedding signature:", { fields: fields.length, sigFields: sigFieldCount, hasImage: !!embeddedImage, hasTyped: !!typedData, useStorage });
+  console.log("[pdfSign] Embedding signature:", { fields: fields.length, sigFields: sigFieldCount, useStorage });
 
   for (const f of fields) {
     const typeLower = String(f.type || "signature").toLowerCase();
     const isSig = typeLower === "signature" || typeLower === "initial";
     if (!isSig) continue;
+
+    const signatureDataForField = hasPerField && f.id && signRequest.fieldSignatureData[f.id]
+      ? signRequest.fieldSignatureData[f.id]
+      : signRequest.signatureData;
+    if (!signatureDataForField) continue;
+
+    const imageBuffer = await getSignatureImageBuffer(signatureDataForField);
+    let embeddedImage = null;
+    if (imageBuffer) {
+      try {
+        embeddedImage = await pdfDoc.embedPng(imageBuffer);
+      } catch {
+        try {
+          embeddedImage = await pdfDoc.embedJpg(imageBuffer);
+        } catch (err) {
+          console.error("[pdfSign] Failed to embed signature image", err.message);
+        }
+      }
+    }
+
+    const typedData = parseTypedSignature(signatureDataForField);
+    let embeddedTypedFont = null;
+    if (typedData?.font && (SIGNATURE_FONT_FILES[typedData.font] || FONT_CDN_URLS[typedData.font])) {
+      try {
+        let fontBytes = null;
+        const fontPath = path.join(FONTS_DIR, SIGNATURE_FONT_FILES[typedData.font]);
+        try {
+          fontBytes = await fs.readFile(fontPath);
+        } catch {
+          const cdnUrl = FONT_CDN_URLS[typedData.font];
+          if (cdnUrl) {
+            const res = await fetch(cdnUrl);
+            if (res.ok) fontBytes = Buffer.from(await res.arrayBuffer());
+          }
+        }
+        if (fontBytes && fontBytes.length > 0) {
+          embeddedTypedFont = await pdfDoc.embedFont(fontBytes);
+        }
+      } catch (err) {
+        console.warn("[pdfSign] Custom font not loaded, using default:", typedData.font, err.message);
+      }
+    }
 
     const pageIndex = Math.max(0, (f.page || 1) - 1);
     const page = pages[pageIndex];
@@ -200,7 +215,6 @@ async function embedSignatureInPdf(doc, signRequest) {
     const labelH = Math.min(5, innerH * 0.15);
     const idH = Math.min(5, innerH * 0.15);
     const sigH = Math.max(innerH * 0.55, innerH - labelH - idH - 8);
-    // Keep "Signed by:", signature, and ID inside border using same margins
     const labelY = innerY + innerH - labelH - SIG_TEXT_MARGIN_V;
     const sigY = innerY + idH + SIG_TEXT_MARGIN_V;
     const idY = innerY + SIG_TEXT_MARGIN_V;
@@ -209,7 +223,6 @@ async function embedSignatureInPdf(doc, signRequest) {
       try {
         const borderDims = borderAsset.embed.scaleToFit(w, h);
         if (borderDims.width > 0 && borderDims.height > 0) {
-          const borderX = x + (w - borderDims.width) / 2;
           const borderY = yPdf + (h - borderDims.height) / 2;
           page.drawImage(borderAsset.embed, {
             x: x,
@@ -227,7 +240,6 @@ async function embedSignatureInPdf(doc, signRequest) {
     if (embeddedImage) {
       try {
         const sigDims = embeddedImage.scaleToFit(innerW, sigH);
-        const sigX = innerX + (innerW - sigDims.width) / 2;
         const sigYc = sigY + (sigH - sigDims.height) / 2;
         page.drawImage(embeddedImage, {
           x: x+5,
@@ -253,12 +265,10 @@ async function embedSignatureInPdf(doc, signRequest) {
           .map(word => word.charAt(0).toUpperCase() + word.slice(1))
           .join(' ');
         if (!text) text = signerName;
-        // Inset box so script glyphs (e.g. 'j', ascenders) stay inside the border
         const sigTextW = Math.max(1, innerW - 2 * SIG_TEXT_MARGIN_H);
         const sigTextH = Math.max(1, sigH - 2 * SIG_TEXT_MARGIN_V);
         const sigTextX = innerX + SIG_TEXT_MARGIN_H;
         const sigTextY = sigY + SIG_TEXT_MARGIN_V;
-        // Signature font = 60% of signature area height; shrink only if needed to fit width
         let fontSizePt = sigTextH * 0.6;
         const fontToUse = embeddedTypedFont || helvetica;
         let textWidth = fontToUse.widthOfTextAtSize(text, fontSizePt);
@@ -267,7 +277,6 @@ async function embedSignatureInPdf(doc, signRequest) {
           fontSizePt -= 1;
           textWidth = fontToUse.widthOfTextAtSize(text, fontSizePt);
         }
-        const textX = sigTextX + Math.max(0, (sigTextW - textWidth) / 2);
         const textY = sigTextY + sigTextH / 2 - fontSizePt / 2;
         const drawOpts = {
           x: x+5,
@@ -281,7 +290,6 @@ async function embedSignatureInPdf(doc, signRequest) {
         console.error("[pdfSign] Failed to draw typed signature:", err.message);
       }
     } else {
-      // Fallback: draw signer name as text so signature always appears (e.g. image/typed failed or unexpected format)
       try {
         const signerName = (signRequest.signerName || "Signed").trim() || "Signed";
         const fallbackFontSize = Math.min(12, Math.max(8, innerH * 0.4));
@@ -322,6 +330,116 @@ async function embedSignatureInPdf(doc, signRequest) {
       } catch (err) {
         console.error("[pdfSign] Failed to draw ID:", err.message);
       }
+    }
+  }
+
+  // Draw typed text fields (name, email, company, title, text, number) with formatting
+  const fieldValues = signRequest.fieldValues || {};
+  const getFieldKey = (f) => (f.id != null && f.id !== "" ? f.id : `field-${f.page ?? 1}-${f.x ?? 0}-${f.y ?? 0}-${(f.type || "text")}`);
+
+  const FONT_COLOR_MAP = {
+    black: rgb(0, 0, 0),
+    white: rgb(1, 1, 1),
+    red: rgb(0.9, 0.1, 0.1),
+    blue: rgb(0.2, 0.2, 0.9),
+    green: rgb(0.1, 0.5, 0.1),
+    gray: rgb(0.5, 0.5, 0.5),
+    darkgray: rgb(0.25, 0.25, 0.25),
+    "dark gray": rgb(0.25, 0.25, 0.25),
+  };
+  const getTextColor = (colorName) => {
+    if (!colorName || typeof colorName !== "string") return rgb(0, 0, 0);
+    const key = String(colorName).toLowerCase().trim().replace(/\s+/g, "");
+    return FONT_COLOR_MAP[key] || rgb(0, 0, 0);
+  };
+  const getTextFont = async (pdfDoc, f) => {
+    const bold = f.bold === true;
+    const italic = f.italic === true;
+    const family = (f.fontFamily || "").toLowerCase();
+    let base = StandardFonts.Helvetica;
+    if (family.includes("times") || family.includes("georgia")) base = StandardFonts.TimesRoman;
+    else if (family.includes("courier") || family.includes("lucida console")) base = StandardFonts.Courier;
+    if (base === StandardFonts.TimesRoman) {
+      if (bold && italic) return pdfDoc.embedFont(StandardFonts.TimesRomanBoldItalic);
+      if (bold) return pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+      if (italic) return pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+      return pdfDoc.embedFont(StandardFonts.TimesRoman);
+    }
+    if (base === StandardFonts.Courier) {
+      if (bold && italic) return pdfDoc.embedFont(StandardFonts.CourierBoldOblique);
+      if (bold) return pdfDoc.embedFont(StandardFonts.CourierBold);
+      if (italic) return pdfDoc.embedFont(StandardFonts.CourierOblique);
+      return pdfDoc.embedFont(StandardFonts.Courier);
+    }
+    if (bold && italic) return pdfDoc.embedFont(StandardFonts.HelveticaBoldOblique);
+    if (bold) return pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    if (italic) return pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+    return pdfDoc.embedFont(StandardFonts.Helvetica);
+  };
+
+  for (const f of fields) {
+    const typeLower = String(f.type || "signature").toLowerCase();
+    if (!textFieldTypes.includes(typeLower)) continue;
+    const fieldKey = getFieldKey(f);
+    let value = fieldValues[fieldKey] ?? fieldValues[f.id];
+    if (value == null || String(value).trim() === "") {
+      if (f.readOnly && typeLower === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
+      else continue;
+    }
+
+    const pageIndex = Math.max(0, (f.page || 1) - 1);
+    const page = pages[pageIndex];
+    if (!page) continue;
+
+    const pageWidth = page.getWidth();
+    const pageHeight = page.getHeight();
+    const renderW = doc.page1RenderWidth > 0 ? doc.page1RenderWidth : FALLBACK_RENDER_WIDTH;
+    const renderH = doc.page1RenderHeight > 0 ? doc.page1RenderHeight : (pageHeight / pageWidth) * renderW;
+    const scaleX = pageWidth / renderW;
+    const scaleY = pageHeight / renderH;
+    const xRaw = (Number(f.x) || 0) * scaleX;
+    const y = (Number(f.y) || 0) * scaleY;
+    const w = Math.max(20, Math.min((Number(f.width) || 120) * scaleX, pageWidth - 40));
+    const h = Math.max(14, Math.min((Number(f.height) || 24) * scaleY, pageHeight - 40));
+    const x = Math.max(0, Math.min(xRaw, pageWidth - w));
+    let yPdf = pageHeight - y - h;
+    if (yPdf < 0) yPdf = 0;
+    if (yPdf + h > pageHeight) yPdf = pageHeight - h;
+
+    const pad = BORDER_PADDING * Math.min(scaleX, scaleY);
+    const innerX = x + pad;
+    const innerY = yPdf + pad;
+    const innerW = Math.max(1, w - 2 * pad);
+    const innerH = Math.max(1, h - 2 * pad);
+
+    const text = String(value).trim();
+    let fontSizePt = f.fontSize != null && f.fontSize > 0 ? Math.min(72, Math.max(6, Number(f.fontSize))) : Math.min(12, Math.max(8, innerH * 0.7));
+    if (!Number.isFinite(fontSizePt) || fontSizePt <= 0) fontSizePt = 10;
+    const textColor = getTextColor(f.fontColor);
+    const textX = innerX;
+    const textY = innerY + innerH / 2 - fontSizePt / 2;
+
+    try {
+      const textFont = await getTextFont(pdfDoc, f);
+      page.drawText(text, {
+        x: textX,
+        y: textY,
+        size: fontSizePt,
+        font: textFont,
+        color: textColor,
+      });
+      if (f.underline) {
+        const textWidth = textFont.widthOfTextAtSize(text, fontSizePt);
+        const underlineY = textY - 1;
+        page.drawLine({
+          start: { x: textX, y: underlineY },
+          end: { x: textX + textWidth, y: underlineY },
+          thickness: Math.max(0.5, fontSizePt / 18),
+          color: textColor,
+        });
+      }
+    } catch (err) {
+      console.error("[pdfSign] Failed to draw text field:", err.message);
     }
   }
 

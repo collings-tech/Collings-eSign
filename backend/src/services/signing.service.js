@@ -64,12 +64,34 @@ async function createSignRequest({
   return signRequest;
 }
 
-/** Save signature only; do NOT embed in PDF until Complete. */
-async function saveSignatureOnly({ token, signatureData }) {
+/** Save signature only; do NOT embed in PDF until Complete. If fieldId is provided, stores per-field; otherwise legacy (one signature for all). */
+async function saveSignatureOnly({ token, signatureData, fieldId }) {
   const signRequest = await SignRequest.findOne({ signLinkToken: token });
   if (!signRequest) return null;
   if (signRequest.status === "signed") return signRequest;
-  signRequest.signatureData = signatureData;
+  if (fieldId) {
+    if (!signRequest.fieldSignatureData || typeof signRequest.fieldSignatureData !== "object") {
+      signRequest.fieldSignatureData = {};
+    }
+    signRequest.fieldSignatureData[fieldId] = signatureData;
+    signRequest.markModified("fieldSignatureData");
+  } else {
+    signRequest.signatureData = signatureData;
+  }
+  await signRequest.save();
+  return signRequest;
+}
+
+/** Save a typed field value (name, email, company, title, text, number). */
+async function saveFieldValue({ token, fieldId, value }) {
+  const signRequest = await SignRequest.findOne({ signLinkToken: token });
+  if (!signRequest) return null;
+  if (signRequest.status === "signed") return signRequest;
+  if (!signRequest.fieldValues || typeof signRequest.fieldValues !== "object") {
+    signRequest.fieldValues = {};
+  }
+  signRequest.fieldValues[fieldId] = value == null ? "" : String(value).trim();
+  signRequest.markModified("fieldValues");
   await signRequest.save();
   return signRequest;
 }
@@ -79,9 +101,25 @@ async function completeSigning({ token, ip, userAgent }) {
   const signRequest = await SignRequest.findOne({ signLinkToken: token });
   if (!signRequest) return null;
   if (signRequest.status === "signed") return signRequest;
-  if (!signRequest.signatureData) {
-    return null; // Must have signed first
+  const fields = signRequest.signatureFields || [];
+  const sigFields = fields.filter((f) => {
+    const t = String(f.type || "signature").toLowerCase();
+    return t === "signature" || t === "initial";
+  });
+  const hasPerField = signRequest.fieldSignatureData && typeof signRequest.fieldSignatureData === "object" && Object.keys(signRequest.fieldSignatureData).length > 0;
+  if (sigFields.length > 0) {
+    if (hasPerField) {
+      const missing = sigFields.filter((f) => !signRequest.fieldSignatureData[f.id]);
+      if (missing.length > 0) {
+        const err = new Error("Please sign all required fields before completing.");
+        err.code = "FIELDS_UNSIGNED";
+        throw err;
+      }
+    } else if (!signRequest.signatureData) {
+      return null; // Must have signed first (legacy single signature)
+    }
   }
+  // If no signature fields, allow complete (e.g. document with only text fields)
 
   const doc = await Document.findById(signRequest.documentId).lean();
   if (!doc) {
@@ -207,5 +245,6 @@ async function sendToNextSignerInOrder(documentId) {
 module.exports = {
   createSignRequest,
   saveSignatureOnly,
+  saveFieldValue,
   completeSigning,
 };

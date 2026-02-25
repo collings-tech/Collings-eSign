@@ -315,24 +315,50 @@ router.put('/:id/signing-fields', requireAuth, async (req, res) => {
       await doc.save();
     }
     const signReqs = await SignRequest.find({ documentId: doc._id });
-    const typeMap = { Signature: 'signature', Initial: 'initial', signature: 'signature', initial: 'initial' };
+    const allowedTypes = ['signature', 'initial', 'stamp', 'date', 'name', 'email', 'company', 'title', 'text', 'number', 'checkbox', 'dropdown', 'radio'];
+    const normalizeType = (t) => {
+      if (!t) return 'signature';
+      const lower = String(t).toLowerCase();
+      return allowedTypes.includes(lower) ? lower : 'signature';
+    };
     for (const sr of signReqs) {
       const srIdStr = sr._id.toString();
       const forThisSigner = (fields || [])
         .filter((f) => f.signRequestId != null && String(f.signRequestId) === srIdStr)
-        .map((f) => ({
-          id: f.id || undefined,
-          page: Number(f.page) || 1,
-          x: Number(f.x) || 0,
-          y: Number(f.y) || 0,
-          width: Number(f.width) || 160,
-          height: Number(f.height) || 36,
-          type: typeMap[f.type] || 'signature',
-          required: f.required !== false,
-          dataLabel: String(f.dataLabel || '').slice(0, 200),
-          tooltip: String(f.tooltip || '').slice(0, 500),
-          scale: Math.min(200, Math.max(50, Number(f.scale) || 100)),
-        }));
+        .map((f) => {
+          const opts = Array.isArray(f.options) ? f.options.filter((o) => o && (o.label != null || o.value != null)).map((o) => ({
+            label: String(o.label ?? o.value ?? '').slice(0, 200),
+            value: String(o.value ?? o.label ?? '').slice(0, 200),
+          })) : undefined;
+          const fieldData = {
+            id: f.id || undefined,
+            page: Number(f.page) || 1,
+            x: Number(f.x) || 0,
+            y: Number(f.y) || 0,
+            width: Number(f.width) || 160,
+            height: Number(f.height) || 36,
+            type: normalizeType(f.type),
+            required: f.required !== false,
+            dataLabel: String(f.dataLabel || '').slice(0, 200),
+            tooltip: String(f.tooltip || '').slice(0, 500),
+            scale: Math.min(200, Math.max(50, Number(f.scale) || 100)),
+            options: opts,
+            defaultOption: f.defaultOption != null ? String(f.defaultOption).slice(0, 200) : '',
+          };
+          if (f.nameFormat != null) fieldData.nameFormat = String(f.nameFormat).slice(0, 50);
+          if (f.readOnly != null) fieldData.readOnly = Boolean(f.readOnly);
+          if (f.fontFamily != null) fieldData.fontFamily = String(f.fontFamily).slice(0, 100);
+          if (f.fontSize != null) fieldData.fontSize = Math.min(72, Math.max(6, Number(f.fontSize) || 14));
+          if (f.bold != null) fieldData.bold = Boolean(f.bold);
+          if (f.italic != null) fieldData.italic = Boolean(f.italic);
+          if (f.underline != null) fieldData.underline = Boolean(f.underline);
+          if (f.fontColor != null) fieldData.fontColor = String(f.fontColor).slice(0, 50);
+          if (f.addText != null) fieldData.addText = String(f.addText).slice(0, 10000);
+          if (f.characterLimit != null) fieldData.characterLimit = Math.min(10000, Math.max(1, Number(f.characterLimit) || 4000));
+          if (f.hideWithAsterisks != null) fieldData.hideWithAsterisks = Boolean(f.hideWithAsterisks);
+          if (f.fixedWidth != null) fieldData.fixedWidth = Boolean(f.fixedWidth);
+          return fieldData;
+        });
       sr.signatureFields = forThisSigner;
       await sr.save();
     }

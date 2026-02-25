@@ -1,26 +1,38 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
 import PdfViewer from "../components/PdfViewer.jsx";
 import AdoptSignatureModal from "../components/AdoptSignatureModal.jsx";
+import collingsLogo from "../assets/collings-logo-1.png";
 
 export default function SigningPage() {
   const { token } = useParams();
   const [info, setInfo] = useState(null);
   const [fileUrl, setFileUrl] = useState(null);
+  const [fileUrlLoading, setFileUrlLoading] = useState(false);
+  const [fileUrlError, setFileUrlError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const fileUrlTimeoutRef = useRef(null);
   const [error, setError] = useState("");
   const [signModalOpen, setSignModalOpen] = useState(false);
   const [signFieldId, setSignFieldId] = useState(null);
   const [completing, setCompleting] = useState(false);
   const [completeError, setCompleteError] = useState("");
   const [showSigningCompletedMessage, setShowSigningCompletedMessage] = useState(false);
+  /** Signed file URL available immediately after complete (before fileUrl is set for viewer) */
+  const [completedFileUrl, setCompletedFileUrl] = useState(null);
   const [zoom, setZoom] = useState(100);
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
   const [page1Rect, setPage1Rect] = useState(null);
   /** Per-page rects so fields on page 2+ are positioned correctly (same format as page1Rect: viewport-relative to inner) */
   const [pageRects, setPageRects] = useState([]);
   const [linkExpired, setLinkExpired] = useState(false);
+  const [localFieldOverrides, setLocalFieldOverrides] = useState({});
+  /** Local cache of field values so we don't refetch on every blur (avoids PDF reload/flicker when typing). */
+  const [savedFieldValues, setSavedFieldValues] = useState({});
+  /** Measured widths for text fields so they grow with content (keyed by field id). */
+  const [textFieldWidths, setTextFieldWidths] = useState({});
+  const textMeasureRefs = useRef({});
   const containerRef = useRef(null);
   const pdfInnerRef = useRef(null);
 
@@ -49,20 +61,65 @@ export default function SigningPage() {
     fetchInfo();
   }, [fetchInfo]);
 
-  // Fetch view URL for PDF (signed URL from storage or /uploads path). Refetch when info changes (e.g. after complete → signed PDF).
+  // Keep saved field values in sync with server when info loads or updates (e.g. after sign/complete).
+  useEffect(() => {
+    const fromServer = info?.signRequest?.fieldValues;
+    if (fromServer && typeof fromServer === "object") setSavedFieldValues(fromServer);
+  }, [info?.signRequest?.fieldValues]);
+
+  const fetchFileUrl = useCallback(() => {
+    setFileUrlError(null);
+    setFileUrlLoading(true);
+    const timeoutMs = 20000;
+    const timeoutId = setTimeout(() => {
+      setFileUrlLoading((prev) => {
+        if (prev) setFileUrlError("Document is taking longer than usual. Check your connection and try again.");
+        return false;
+      });
+    }, timeoutMs);
+    fileUrlTimeoutRef.current = timeoutId;
+
+    apiClient.get(`/signing/${token}/file-url`)
+      .then((res) => {
+        if (fileUrlTimeoutRef.current) {
+          clearTimeout(fileUrlTimeoutRef.current);
+          fileUrlTimeoutRef.current = null;
+        }
+        const url = res.data?.url;
+        if (url) {
+          setFileUrl(url);
+          setFileUrlError(null);
+        } else {
+          setFileUrl(null);
+          setFileUrlError("Document file could not be loaded.");
+        }
+        setFileUrlLoading(false);
+      })
+      .catch((err) => {
+        if (fileUrlTimeoutRef.current) {
+          clearTimeout(fileUrlTimeoutRef.current);
+          fileUrlTimeoutRef.current = null;
+        }
+        setFileUrl(null);
+        setFileUrlError(err.response?.data?.error || "Document could not be loaded. Try again.");
+        setFileUrlLoading(false);
+      });
+  }, [token]);
+
+  // Fetch view URL for PDF when info is available. Refetch when info changes (e.g. after complete → signed PDF).
   useEffect(() => {
     if (!info) {
       setFileUrl(null);
+      setFileUrlError(null);
+      setFileUrlLoading(false);
+      if (fileUrlTimeoutRef.current) {
+        clearTimeout(fileUrlTimeoutRef.current);
+        fileUrlTimeoutRef.current = null;
+      }
       return;
     }
-    let cancelled = false;
-    apiClient.get(`/signing/${token}/file-url`).then((res) => {
-      if (!cancelled && res.data?.url) setFileUrl(res.data.url);
-    }).catch(() => {
-      if (!cancelled) setFileUrl(null);
-    });
-    return () => { cancelled = true; };
-  }, [token, info]);
+    fetchFileUrl();
+  }, [info, fetchFileUrl]);
 
   // ResizeObserver must run at top level (same hook order every render)
   const showDoc = !!info;
@@ -134,11 +191,32 @@ export default function SigningPage() {
     };
   }, [showDoc, contentSize.width, contentSize.height, zoom, measurePages]);
 
+  // Scroll document canvas to top when PDF loads so first page is visible
+  useEffect(() => {
+    if (!fileUrl) return;
+    const el = containerRef.current;
+    const scrollToTop = () => {
+      if (el) {
+        el.scrollTop = 0;
+        el.scrollLeft = 0;
+      }
+    };
+    scrollToTop();
+    const t = setTimeout(scrollToTop, 400);
+    const t2 = setTimeout(scrollToTop, 1000);
+    return () => {
+      clearTimeout(t);
+      clearTimeout(t2);
+    };
+  }, [fileUrl]);
+
   const handleAdoptAndSign = async ({ signatureData }) => {
-    await apiClient.post(`/signing/${token}/sign`, { signatureData });
+    await apiClient.post(`/signing/${token}/sign`, {
+      signatureData,
+      ...(signFieldId ? { fieldId: signFieldId } : {}),
+    });
     setSignModalOpen(false);
     setSignFieldId(null);
-    // Refetch so we get updated document with signedFilePath and show the signed PDF
     await fetchInfo();
   };
 
@@ -147,10 +225,28 @@ export default function SigningPage() {
     setSignModalOpen(true);
   };
 
+  const saveFieldValue = useCallback(async (fieldId, value) => {
+    const trimmed = value == null ? "" : String(value).trim();
+    setSavedFieldValues((prev) => ({ ...prev, [fieldId]: trimmed }));
+    try {
+      await apiClient.patch(`/signing/${token}/field-value`, { fieldId, value: trimmed });
+    } catch (err) {
+      console.error("Failed to save field value", err);
+      setSavedFieldValues((prev) => ({ ...prev, [fieldId]: info?.signRequest?.fieldValues?.[fieldId] ?? prev[fieldId] }));
+    }
+  }, [token, info?.signRequest?.fieldValues]);
+
   const handleComplete = async () => {
     setCompleteError("");
     setCompleting(true);
     try {
+      // Flush all unsaved field values to server before Complete (user may have typed without blurring)
+      const toFlush = { ...localFieldOverrides };
+      for (const [fieldId, value] of Object.entries(toFlush)) {
+        await apiClient.patch(`/signing/${token}/field-value`, { fieldId, value: value == null ? "" : String(value).trim() });
+      }
+      setLocalFieldOverrides({});
+      setSavedFieldValues((prev) => ({ ...prev, ...toFlush }));
       await apiClient.post(`/signing/${token}/complete`);
       await fetchInfo();
       // Force viewer to unload current PDF, then load the signed one (avoids cache showing original)
@@ -158,6 +254,7 @@ export default function SigningPage() {
       const urlRes = await apiClient.get(`/signing/${token}/file-url`);
       const signedUrl = urlRes.data?.url;
       if (signedUrl) {
+        setCompletedFileUrl(signedUrl);
         setTimeout(() => setFileUrl(signedUrl), 1000);
       }
       setShowSigningCompletedMessage(true);
@@ -167,6 +264,37 @@ export default function SigningPage() {
       setCompleting(false);
     }
   };
+
+  const TEXT_FIELD_TYPES_FOR_MEASURE = ["name", "email", "company", "title", "text", "number", "stamp", "date"];
+  useLayoutEffect(() => {
+    if (!info?.signRequest?.signatureFields?.length) return;
+    const fields = info.signRequest.signatureFields;
+    const fieldValues = info.signRequest.fieldValues || {};
+    const scale = zoom / 200;
+    const hasSize = contentSize.width > 0 && contentSize.height > 0;
+    const page1Rect = contentSize.width && contentSize.height && pageRects.length > 0 ? pageRects[0] : null;
+    const scaleFactor = scale;
+    const renderW = info.document?.page1RenderWidth > 0 ? info.document.page1RenderWidth : (page1Rect ? page1Rect.width / scaleFactor : contentSize.width);
+    const page1LayoutWidth = page1Rect ? page1Rect.width / scaleFactor : contentSize.width;
+    const scaleOverlayX = renderW > 0 ? (page1Rect ? page1LayoutWidth / renderW : (hasSize ? contentSize.width / renderW : 1)) : 1;
+    const next = {};
+    for (const f of fields) {
+      const t = (f.type || "signature").toLowerCase();
+      if (!TEXT_FIELD_TYPES_FOR_MEASURE.includes(t)) continue;
+      let value = localFieldOverrides[f.id] ?? savedFieldValues[f.id] ?? fieldValues[f.id] ?? "";
+      if (!value && t === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
+      const str = typeof value === "string" ? value : String(value);
+      const el = textMeasureRefs.current[f.id];
+      if (el) {
+        const measured = el.getBoundingClientRect().width;
+        const blockWidth = Math.max(100, (f.width || 180) * scaleOverlayX);
+        next[f.id] = Math.max(blockWidth, measured + 16);
+      }
+    }
+    if (Object.keys(next).length > 0) {
+      setTextFieldWidths((prev) => ({ ...prev, ...next }));
+    }
+  }, [info, pageRects, contentSize, zoom, localFieldOverrides, savedFieldValues]);
 
   if (loading) {
     return (
@@ -206,9 +334,31 @@ export default function SigningPage() {
     ? signRequest.signatureFields
     : [{ id: "default", page: 1, x: 100, y: 400, width: 180, height: 36, type: "signature" }];
   const signatureData = signRequest.signatureData;
+  const fieldSignatureData = signRequest.fieldSignatureData || {};
+  const fieldValues = signRequest.fieldValues || {};
   const allFieldsAreInitial = fields.every((f) => (f.type || "signature").toLowerCase() === "initial");
+  const TEXT_FIELD_TYPES = ["name", "email", "company", "title", "text", "number", "stamp", "date"];
+  const sigFields = fields.filter((f) => {
+    const t = (f.type || "signature").toLowerCase();
+    return t === "signature" || t === "initial";
+  });
+  const getFieldKey = (f) => f.id != null && f.id !== "" ? f.id : `field-${f.page ?? 1}-${f.x ?? 0}-${f.y ?? 0}-${(f.type || "text")}`;
+  const allSigFieldsSigned = sigFields.length === 0 || sigFields.every((f) => fieldSignatureData[f.id]) || (signatureData && Object.keys(fieldSignatureData).length === 0);
+  const requiredDataFields = fields.filter((f) => {
+    if (f.required === false) return false;
+    const t = (f.type || "signature").toLowerCase();
+    return t !== "signature" && t !== "initial";
+  });
+  const allRequiredDataFieldsFilled = requiredDataFields.length === 0 || requiredDataFields.every((f) => {
+    const key = getFieldKey(f);
+    const t = (f.type || "signature").toLowerCase();
+    let value = (localFieldOverrides[key] ?? savedFieldValues[key] ?? fieldValues[f.id] ?? fieldValues[key] ?? "").toString().trim();
+    if (!value && t === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
+    return value.length > 0;
+  });
+  const canComplete = allSigFieldsSigned && allRequiredDataFieldsFilled;
 
-  const scale = zoom / 100;
+  const scale = zoom / 200;
   const hasSize = contentSize.width > 0 && contentSize.height > 0;
   const wrapWidth = hasSize ? Math.round(contentSize.width * scale) : undefined;
   const wrapHeight = hasSize ? Math.round(contentSize.height * scale) : undefined;
@@ -233,20 +383,35 @@ export default function SigningPage() {
       )}
       <header className="signing-review-header">
         <div className="signing-review-header-left">
+          <span className="signing-review-brand">
+            <img src={collingsLogo} alt="Collings" className="signing-review-logo" />
+            <span className="signing-review-brand-esign">eSign</span>
+          </span>
           <span className="signing-review-title">Review and complete</span>
         </div>
-        <div className="signing-review-header-center">
-          <span className="signing-envelope-id">Envelope ID: {doc.id}</span>
-        </div>
         <div className="signing-review-header-right">
+          <span className="signing-envelope-id">Envelope ID: {doc.id}</span>
           {isSigned ? (
-            <span className="signing-complete-btn signing-signed-label" style={{ cursor: "default", pointerEvents: "none" }} tabIndex={-1} aria-hidden>Signed</span>
+            (fileUrl || completedFileUrl) ? (
+              <a
+                href={fileUrl || completedFileUrl}
+                download={doc?.title ? (doc.title.endsWith(".pdf") ? doc.title : `${doc.title}.pdf`) : "document.pdf"}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="signing-complete-btn signing-download-btn"
+              >
+                Download
+              </a>
+            ) : (
+              <span className="signing-complete-btn signing-signed-label" style={{ cursor: "default", pointerEvents: "none" }} tabIndex={-1}>Signed</span>
+            )
           ) : (
             <button
               type="button"
               className="signing-complete-btn"
               onClick={handleComplete}
-              disabled={completing}
+              disabled={completing || !canComplete}
+              title={!canComplete ? (!allSigFieldsSigned ? "Sign all required signature fields first" : "Fill in all required fields first") : undefined}
             >
               {completing ? "…" : "Complete"}
             </button>
@@ -254,9 +419,6 @@ export default function SigningPage() {
           {completeError && (
             <span className="signing-complete-error" role="alert">{completeError}</span>
           )}
-          {/* <button type="button" className="signing-more-btn" aria-label="More options">
-            ⋮
-          </button> */}
         </div>
       </header>
 
@@ -275,16 +437,24 @@ export default function SigningPage() {
                   className="signing-pdf-inner"
                   style={{
                     transform: `scale(${scale})`,
-                    transformOrigin: "center center",
+                    transformOrigin: "top center",
                   }}
                 >
                   {fileUrl ? (
                     <PdfViewer
                       key={isSigned ? `signed-${doc?.id}-${fileUrl}` : `draft-${fileUrl}`}
                       fileUrl={fileUrl}
+                      fullWidth
                     />
+                  ) : fileUrlError ? (
+                    <div className="signing-pdf-error">
+                      <p className="signing-pdf-error-text">{fileUrlError}</p>
+                      <button type="button" className="signing-pdf-error-retry" onClick={fetchFileUrl}>
+                        Retry
+                      </button>
+                    </div>
                   ) : (
-                    <div className="signing-loading">Loading PDF…</div>
+                    <div className="signing-loading" role="status" aria-live="polite">Loading PDF…</div>
                   )}
                   {/* Placeholder overlay until Complete (then PDF has the signature, no overlay) */}
                   {!isSigned && (
@@ -292,17 +462,113 @@ export default function SigningPage() {
                     {fields.map((f) => {
                       const typeLower = (f.type || "signature").toLowerCase();
                       const isSig = typeLower === "signature" || typeLower === "initial";
-                      if (!isSig) return null;
-                      const isInitialField = typeLower === "initial";
-                      const blockHeight = Math.max(28, (f.height || 36) * scaleOverlayY);
-                      const blockWidth = Math.max(120, (f.width || 180) * scaleOverlayX);
-                      const hasSigned = !!signatureData;
+                      const isTextField = TEXT_FIELD_TYPES.includes(typeLower);
                       const pageNum = Math.max(1, f.page || 1);
                       const fieldPageRect = pageRects.length >= pageNum ? pageRects[pageNum - 1] : page1Rect;
                       const fieldOffsetX = fieldPageRect ? fieldPageRect.left / scaleFactor : offsetOverlayX;
                       const fieldOffsetY = fieldPageRect ? fieldPageRect.top / scaleFactor : offsetOverlayY;
                       const left = fieldOffsetX + (Number(f.x) || 0) * scaleOverlayX;
                       const top = fieldOffsetY + (Number(f.y) || 0) * scaleOverlayY;
+                      const blockHeight = Math.max(24, (f.height || 36) * scaleOverlayY);
+                      const blockWidth = Math.max(100, (f.width || 180) * scaleOverlayX);
+
+                      if (isTextField) {
+                        const fieldKey = getFieldKey(f);
+                        const isReadOnly = f.readOnly === true;
+                        const rawValue = localFieldOverrides[fieldKey] ?? savedFieldValues[fieldKey] ?? fieldValues[f.id] ?? fieldValues[fieldKey];
+                        const value = rawValue ?? (typeLower === "text" && (f.addText ?? "").trim() ? f.addText.trim() : "");
+                        const label = typeLower === "date" ? "Date signed" : typeLower.charAt(0).toUpperCase() + typeLower.slice(1);
+                        const effectiveWidth = textFieldWidths[f.id] ?? blockWidth;
+                        return (
+                          <div
+                            key={f.id || `${f.page}-${f.x}-${f.y}`}
+                            className={`signing-field-block signing-field-text-block ${isReadOnly ? "signing-field-readonly" : ""}`}
+                            style={{
+                              left,
+                              top,
+                              width: effectiveWidth,
+                              height: blockHeight,
+                              minWidth: blockWidth,
+                              minHeight: 24,
+                            }}
+                          >
+                            <span
+                              ref={(el) => { textMeasureRefs.current[f.id] = el; }}
+                              className="signing-field-text-measure"
+                              aria-hidden
+                            >
+                              {typeof value === "string" ? value : String(value ?? "")}
+                            </span>
+                            <input
+                              type={typeLower === "email" ? "email" : typeLower === "date" ? "date" : "text"}
+                              inputMode={typeLower === "number" ? "numeric" : "text"}
+                              className="signing-field-text-input"
+                              value={value}
+                              readOnly={isReadOnly}
+                              disabled={isReadOnly}
+                              onChange={isReadOnly ? undefined : (e) => setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: e.target.value }))}
+                              onBlur={isReadOnly ? undefined : (e) => saveFieldValue(fieldKey, e.target.value)}
+                              placeholder={label}
+                              aria-label={label}
+                              aria-readonly={isReadOnly}
+                            />
+                          </div>
+                        );
+                      }
+
+                      if (typeLower === "dropdown") {
+                        const opts = Array.isArray(f.options) ? f.options : [];
+                        const optionLabels = opts.map((o) => (o.label ?? o.value ?? "").trim()).filter(Boolean);
+                        const defaultVal = (f.defaultOption != null && f.defaultOption !== "" && optionLabels.includes(f.defaultOption))
+                          ? f.defaultOption
+                          : "";
+                        const fieldKey = getFieldKey(f);
+                        const value = localFieldOverrides[fieldKey] ?? savedFieldValues[fieldKey] ?? fieldValues[f.id] ?? fieldValues[fieldKey] ?? defaultVal;
+                        const valueStr = (typeof value === "string" ? value : String(value ?? "")).trim();
+                        const valueToShow = valueStr && optionLabels.includes(valueStr) ? valueStr : "";
+                        return (
+                          <div
+                            key={f.id || `${f.page}-${f.x}-${f.y}`}
+                            className="signing-field-block signing-field-dropdown-block"
+                            style={{
+                              left,
+                              top,
+                              width: blockWidth,
+                              height: blockHeight,
+                              minWidth: 100,
+                              minHeight: 24,
+                            }}
+                          >
+                            <select
+                              className="signing-field-dropdown-select"
+                              value={valueToShow}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: v }));
+                                saveFieldValue(fieldKey, v);
+                              }}
+                              aria-label={f.dataLabel || "Dropdown"}
+                            >
+                              <option value="">-- select --</option>
+                              {opts.map((o, idx) => {
+                                const displayText = (o.label ?? o.value ?? "").trim() || "";
+                                return (
+                                  <option key={idx} value={displayText}>
+                                    {displayText}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                        );
+                      }
+
+                      if (!isSig) return null;
+                      const isInitialField = typeLower === "initial";
+                      const hasSigned = !!(fieldSignatureData[f.id] ?? (signatureData && Object.keys(fieldSignatureData).length === 0 ? signatureData : null));
+                      const fieldSignature = fieldSignatureData[f.id] || (Object.keys(fieldSignatureData).length === 0 ? signatureData : null);
+                      const sigBlockHeight = Math.max(28, (f.height || 36) * scaleOverlayY);
+                      const sigBlockWidth = Math.max(120, (f.width || 180) * scaleOverlayX);
                       return (
                         <div
                           key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -310,8 +576,8 @@ export default function SigningPage() {
                           style={{
                             left,
                             top,
-                            width: blockWidth,
-                            height: blockHeight,
+                            width: sigBlockWidth,
+                            height: sigBlockHeight,
                             minWidth: 120,
                             minHeight: 28,
                           }}
@@ -326,7 +592,7 @@ export default function SigningPage() {
                               {!isInitialField && <span className="signing-field-signed-by">Signed by:</span>}
                               <div className="signing-field-signature-inner">
                                 <SigningFieldSignature
-                                  signatureData={signatureData}
+                                  signatureData={fieldSignature}
                                   signerName={signRequest.signerName}
                                   initials={getInitials(signRequest.signerName)}
                                   initialsOnly={isInitialField}
@@ -382,7 +648,14 @@ export default function SigningPage() {
             </span>
             Comment
           </button>
-          {isSigned ? (
+          {(isSigned && (fileUrl || completedFileUrl)) ? (
+            <a href={fileUrl || completedFileUrl} download={doc?.title ? (doc.title.endsWith(".pdf") ? doc.title : `${doc.title}.pdf`) : "document.pdf"} target="_blank" rel="noopener noreferrer" className="signing-sidebar-item">
+              <span className="signing-sidebar-icon" aria-hidden>
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+              </span>
+              Download
+            </a>
+          ) : isSigned ? (
             <span className="signing-sidebar-item">
               <span className="signing-sidebar-icon" aria-hidden>
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
@@ -392,7 +665,7 @@ export default function SigningPage() {
           ) : (
             <>
               {fileUrl ? (
-                <a href={fileUrl} download={doc?.title ? (doc.title.endsWith(".pdf") ? doc.title : `${doc.title}.pdf`) : "document.pdf"} className="signing-sidebar-item">
+                <a href={fileUrl} download={doc?.title ? (doc.title.endsWith(".pdf") ? doc.title : `${doc.title}.pdf`) : "document.pdf"} target="_blank" rel="noopener noreferrer" className="signing-sidebar-item">
                   <span className="signing-sidebar-icon" aria-hidden>
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
                   </span>
@@ -420,37 +693,38 @@ export default function SigningPage() {
             </span>
             Counsel
           </button> */}
-          <div className="signing-sidebar-zoom">
-            <button
-              type="button"
-              className="signing-zoom-btn signing-zoom-in"
-              onClick={() => setZoom((z) => Math.min(175, z + 25))}
-              disabled={zoom >= 175}
-              aria-label="Zoom in"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.35-4.35" />
-                <path d="M11 8v6" />
-                <path d="M8 11h6" />
-              </svg>
-            </button>
-            <span className="signing-zoom-value" aria-live="polite">{zoom}%</span>
-            <button
-              type="button"
-              className="signing-zoom-btn signing-zoom-out"
-              onClick={() => setZoom((z) => Math.max(100, z - 25))}
-              disabled={zoom <= 100}
-              aria-label="Zoom out"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <circle cx="11" cy="11" r="8" />
-                <path d="m21 21-4.35-4.35" />
-                <path d="M8 11h6" />
-              </svg>
-            </button>
-          </div>
         </aside>
+
+        <div className="signing-zoom-fixed" aria-label="Zoom controls">
+          <button
+            type="button"
+            className="signing-zoom-btn signing-zoom-in"
+            onClick={() => setZoom((z) => Math.min(175, z + 25))}
+            disabled={zoom >= 175}
+            aria-label="Zoom in"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.35-4.35" />
+              <path d="M11 8v6" />
+              <path d="M8 11h6" />
+            </svg>
+          </button>
+          <span className="signing-zoom-value" aria-live="polite">{zoom}%</span>
+          <button
+            type="button"
+            className="signing-zoom-btn signing-zoom-out"
+onClick={() => setZoom((z) => Math.max(75, z - 25))}
+              disabled={zoom <= 75}
+            aria-label="Zoom out"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.35-4.35" />
+              <path d="M8 11h6" />
+            </svg>
+          </button>
+        </div>
       </div>
 
       <footer className="signing-review-footer">
@@ -471,11 +745,23 @@ export default function SigningPage() {
             <h2 id="signing-completed-title" className="signing-completed-title">You've signed</h2>
             <p className="signing-completed-text">
               {doc.status === "completed"
-                ? "The envelope is complete. You can download the document through the link in your email."
-                : "You can download the document through email once the envelope is completed. We'll email you when all recipients have signed."}
+                ? "The envelope is complete."
+                : "You can download the document once the envelope is completed. We'll email you when all recipients have signed."}
             </p>
+            {(fileUrl || completedFileUrl) ? (
+              <a
+                href={fileUrl || completedFileUrl}
+                download={doc?.title ? (doc.title.endsWith(".pdf") ? doc.title : `${doc.title}.pdf`) : "document.pdf"}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="signing-completed-download"
+                onClick={() => setShowSigningCompletedMessage(false)}
+              >
+                Download signed document
+              </a>
+            ) : null}
             <button type="button" className="signing-completed-dismiss" onClick={() => setShowSigningCompletedMessage(false)}>
-              OK
+              {(fileUrl || completedFileUrl) ? "Close" : "OK"}
             </button>
           </div>
         </div>
@@ -486,9 +772,9 @@ export default function SigningPage() {
         onClose={() => { setSignModalOpen(false); setSignFieldId(null); }}
         signerName={signRequest.signerName}
         signerEmail={signRequest.signerEmail}
-        initialSignatureData={signatureData}
+        initialSignatureData={signFieldId ? (fieldSignatureData[signFieldId] || signatureData) : signatureData}
         onAdoptAndSign={handleAdoptAndSign}
-        initialsOnly={allFieldsAreInitial}
+        initialsOnly={signFieldId ? (fields.find((f) => f.id === signFieldId)?.type || "signature").toLowerCase() === "initial" : allFieldsAreInitial}
       />
     </div>
   );
