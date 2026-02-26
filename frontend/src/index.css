@@ -2114,8 +2114,9 @@ body.top-sidebar-open .top-sidebar {
   border-radius: 0;
   overflow: auto;
   box-shadow: none;
-  width: 800px;
-  max-width: 100%;
+  width: 100%;
+  max-width: 800px;
+  margin: 0 auto;
 }
 
 .prepare-pdf-zoom-wrap {
@@ -2126,11 +2127,13 @@ body.top-sidebar-open .top-sidebar {
   overflow: visible;
   min-width: 100%;
   min-height: 100%;
+  width: 100%;
 }
 
 .prepare-pdf-inner {
   position: relative;
-  width: fit-content;
+  width: 100%;
+  min-width: 280px;
   height: fit-content;
   min-height: 600px;
   overflow: visible;
@@ -2138,16 +2141,18 @@ body.top-sidebar-open .top-sidebar {
 }
 
 .prepare-pdf-wrap {
+  width: 100%;
   min-height: 500px;
 }
 
 .prepare-pdf-wrap .pdf-viewer {
   position: relative;
   z-index: 1;
-  width: 800px;
-  max-width: 100%;
+  width: 100%;
+  min-width: 280px;
+  max-width: 800px;
   display: block;
-  margin-top: 0;
+  margin: 0 auto;
   min-height: 500px;
 }
 
@@ -2270,6 +2275,152 @@ body.top-sidebar-open .top-sidebar {
 .prepare-resize-handle-ne { top: -5px;    right: -5px; cursor: ne-resize; }
 .prepare-resize-handle-sw { bottom: -5px; left: -5px;  cursor: sw-resize; }
 .prepare-resize-handle-se { bottom: -5px; right: -5px; cursor: se-resize; }
+
+/* Floating "Add Field" button – visible only on mobile */
+.prepare-fields-fab {
+  display: none;
+  position: fixed;
+  bottom: 5rem;
+  right: 1rem;
+  z-index: 20;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1rem;
+  background: var(--color-accent);
+  color: var(--color-text-inverse);
+  border: none;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+}
+
+.prepare-fields-fab:hover {
+  background: var(--color-accent-hover);
+}
+
+.prepare-fields-fab-icon {
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+/* Mobile fields popup (same content as left sidebar) */
+.prepare-fields-popup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0;
+}
+
+.prepare-fields-popup {
+  background: var(--color-bg-card);
+  width: 100%;
+  max-width: 100%;
+  max-height: 80vh;
+  border-radius: var(--radius) var(--radius) 0 0;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+}
+
+.prepare-fields-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.prepare-fields-popup-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.prepare-fields-popup-close {
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 1.25rem;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  border-radius: var(--radius);
+}
+
+.prepare-fields-popup-close:hover {
+  background: var(--color-bg-nav);
+  color: var(--color-text);
+}
+
+.prepare-fields-popup-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Right panel FAB – Pages button (visible only on mobile) */
+.prepare-right-fab {
+  display: none;
+  position: fixed;
+  bottom: 5rem;
+  left: 1rem;
+  z-index: 20;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1rem;
+  background: var(--color-bg-card);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  cursor: pointer;
+}
+
+.prepare-right-fab:hover {
+  background: var(--color-bg-hover);
+}
+
+.prepare-right-fab-icon {
+  font-size: 1.1rem;
+}
+
+/* Right panel portal (rendered at document.body – base styles) */
+.prepare-right-popup-portal {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  pointer-events: none;
+}
+
+.prepare-right-popup-portal > * {
+  pointer-events: auto;
+}
+
+/* Right panel header and close (visible only on mobile popup) */
+.prepare-right-popup-header {
+  display: none;
+}
+
+.prepare-right-popup-close {
+  display: none;
+}
+
+.prepare-right-popup-body {
+  display: block;
+}
 
 .prepare-right {
   background: var(--color-bg-card);
@@ -2661,19 +2812,19 @@ body.top-sidebar-open .top-sidebar {
 }
 
 .prepare-thumbnails-list {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 0.5rem;
 }
 
 .prepare-pdf-thumbnails {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
   gap: 0.5rem;
 }
 
 .prepare-pdf-thumbnails .prepare-thumbnail-item {
-  flex-shrink: 0;
+  min-width: 0;
 }
 
 .prepare-thumbnail-canvas {
@@ -4086,7 +4237,7 @@ body.top-sidebar-open .top-sidebar {
   max-width: 100%;
 }
 
-/* Overlay must sit on top of PDF so placeholder is always visible */
+/* Overlay must sit on top of PDF so field placeholders are always visible */
 .signing-fields-overlay {
   position: absolute;
   left: 0;
@@ -4097,7 +4248,8 @@ body.top-sidebar-open .top-sidebar {
   height: 100%;
   min-height: 400px;
   pointer-events: none;
-  z-index: 20;
+  z-index: 100;
+  isolation: isolate;
 }
 
 .signing-fields-overlay .signing-field-block {
@@ -4108,10 +4260,10 @@ body.top-sidebar-open .top-sidebar {
 /* Typable text fields: name, email, company, title, text, number – normal font */
 .signing-field-text-block {
   position: relative;
-  background: rgba(255,255,255,0.7);
-  border: 1px solid #c4b5fd;
+  background: #ffffff;
+  border: 2px solid #7c3aed;
   border-radius: 4px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
   padding: 0;
   display: flex;
   align-items: stretch;
@@ -4144,13 +4296,14 @@ body.top-sidebar-open .top-sidebar {
   font-size: 0.875rem;
   font-weight: 400;
   color: #1f2937;
-  background: transparent;
+  background: #faf5ff;
   box-sizing: border-box;
   outline: none;
 }
 
 .signing-field-text-input::placeholder {
-  color: #9ca3af;
+  color: #6b21a8;
+  opacity: 0.85;
 }
 
 .signing-field-text-input:focus {
@@ -4167,9 +4320,10 @@ body.top-sidebar-open .top-sidebar {
 }
 
 .signing-field-dropdown-block {
-  background: rgba(255,255,255,0.9);
-  border: 1px solid #c4b5fd;
+  background: #ffffff;
+  border: 2px solid #7c3aed;
   border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
 }
 
 .signing-field-dropdown-select {
@@ -5938,12 +6092,34 @@ body.top-sidebar-open .top-sidebar {
     padding-inline: 0.75rem;
   }
 
+  .top-header-left {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .top-brand-text {
+    min-width: 0;
+  }
+
+  .top-brand-logo {
+    height: 18px;
+  }
+
+  .top-brand-esign {
+    font-size: 0.75em;
+  }
+
   .top-header-hamburger {
     display: flex;
+    flex-shrink: 0;
   }
 
   .top-nav {
     display: none;
+  }
+
+  .top-header-right {
+    flex-shrink: 0;
   }
 
   .user-name,
@@ -5993,6 +6169,7 @@ body.top-sidebar-open .top-sidebar {
   }
 
   .new-agreement-body {
+    max-width: 100%;
     padding: 1rem;
     padding-bottom: 5rem;
   }
@@ -6010,17 +6187,258 @@ body.top-sidebar-open .top-sidebar {
     bottom: 1.5rem;
   }
 
+  /* New Agreement: full-width mobile layout */
+  .top-main:has(.new-agreement) {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .new-agreement {
+    width: 100%;
+  }
+
+  .new-agreement-docs-wrap {
+    flex-direction: column;
+  }
+
+  .new-agreement-upload {
+    width: 100%;
+    min-width: 0;
+    padding: 1.5rem 1rem;
+  }
+
+  .new-agreement-doc-cards {
+    width: 100%;
+  }
+
+  .new-agreement-recipient-fields {
+    max-width: none;
+    width: 100%;
+  }
+
+  .new-agreement-recipient-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .new-agreement-recipient-actions {
+    flex-wrap: wrap;
+  }
+
+  .new-agreement-message-field input,
+  .new-agreement-message-field textarea {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .new-agreement-footer {
+    flex-direction: column;
+  }
+
+  .new-agreement-footer .new-agreement-btn.next {
+    width: 100%;
+  }
+
+  .new-agreement-section {
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+  }
+
   .prepare-body {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr auto;
+    grid-template-rows: minmax(200px, 1fr) auto;
+  }
+
+  .prepare-fields-fab {
+    display: flex;
+  }
+
+  .prepare-right-fab {
+    display: flex;
+  }
+
+  .prepare-right-popup-panel .prepare-right-popup-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    background: var(--color-bg-nav);
+    color: var(--color-text-muted);
+    border-radius: var(--radius);
+    font-size: 1.1rem;
+    cursor: pointer;
+    z-index: 1;
+  }
+
+  .prepare-right-popup-close:hover {
+    background: var(--color-bg-hover);
+    color: var(--color-text);
+  }
+
+  .prepare-right-popup-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-bg-card);
+  }
+
+  .prepare-right-popup-title {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 600;
+    flex: 1;
+  }
+
+  .prepare-right-popup-panel .prepare-right-popup-close {
+    flex-shrink: 0;
+    width: 2.5rem;
+    height: 2.5rem;
+    font-size: 1.25rem;
+    min-width: 2.5rem;
+  }
+
+  .prepare-right-popup-panel .prepare-right-popup-body {
+    padding: 1rem;
+  }
+
+  .prepare-right-popup-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  .prepare-right-popup-panel {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 75vh;
+    max-height: 75vh;
+    z-index: 31;
+    display: flex;
+    flex-direction: column;
+    background: var(--color-bg-card);
+    box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.2);
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding: 0;
+  }
+
+  .prepare-right-popup-panel .prepare-right-popup-header {
+    display: flex !important;
+    flex-shrink: 0;
+    flex-wrap: nowrap;
+  }
+
+  .prepare-right-popup-panel .prepare-right-popup-close {
+    min-height: 44px;
+    padding: 0 1rem;
+    white-space: nowrap;
+  }
+
+  .prepare-right-popup-panel .prepare-right-popup-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: scroll;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y;
+    overscroll-behavior: contain;
+  }
+
+  .prepare-right-desktop {
+    display: none !important;
+  }
+
+  .prepare-left-desktop {
+    display: none !important;
   }
 
   .prepare-left {
-    max-height: 200px;
+    max-height: none;
+    min-height: 0;
+    flex-shrink: 0;
   }
 
   .prepare-right {
-    max-height: 180px;
+    max-height: none;
+    min-height: 0;
+    flex-shrink: 0;
+  }
+
+  .prepare-center {
+    padding: 0.5rem;
+    min-height: 200px;
+  }
+
+  .prepare-doc-canvas {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .prepare-pdf-wrap .pdf-viewer {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .prepare-header {
+    padding: 0.5rem 0.75rem;
+    gap: 0.5rem;
+  }
+
+  .prepare-header-left {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .prepare-doc-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 140px;
+  }
+
+  .prepare-header-center {
+    flex: none;
+  }
+
+  .prepare-recipient-legend-name {
+    max-width: 60px;
+  }
+
+  .prepare-recipient-select-wrap {
+    min-width: 0;
+  }
+
+  .prepare-search-wrap {
+    min-width: 0;
+  }
+
+  .prepare-thumbnails-list {
+    min-width: 0;
+  }
+
+  .prepare-pdf-thumbnails {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .prepare-footer {
+    flex-wrap: wrap;
+    padding: 0.5rem 0.75rem;
+    gap: 0.5rem;
+  }
+
+  .prepare-footer .prepare-btn {
+    flex: 1;
+    min-width: 100px;
   }
 }
 
@@ -6917,6 +7335,15 @@ body.top-sidebar-open .top-sidebar {
     padding: 1.5rem 1rem;
   }
 
+  .prepare-doc-name {
+    max-width: 100px;
+  }
+
+  .prepare-footer .prepare-btn {
+    min-width: 0;
+    flex: 1 1 45%;
+  }
+
   .auth-card h1 {
     font-size: 1.35rem;
   }
@@ -7018,9 +7445,31 @@ body.top-sidebar-open .top-sidebar {
     padding: 0.75rem;
   }
 
-  .new-agreement-header,
-  .new-agreement-body {
+  .new-agreement-header {
     padding: 0.75rem 1rem;
+  }
+
+  .new-agreement-body {
+    padding: 0.75rem 1rem 5rem;
+  }
+
+  .new-agreement-section-head {
+    padding: 0.75rem 1rem;
+  }
+
+  .new-agreement-docs-wrap,
+  .new-agreement-recipients,
+  .new-agreement-message {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .new-agreement-upload {
+    padding: 1.25rem 0.75rem;
+  }
+
+  .new-agreement-title {
+    font-size: 0.9rem;
   }
 
   .new-agreement-fab {
