@@ -23,6 +23,8 @@ export default function SigningPage() {
   const [completedFileUrl, setCompletedFileUrl] = useState(null);
   const [zoom, setZoom] = useState(100);
   const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
+  /** Layout size of .signing-pdf-inner (unscaled) so we can size the scroll wrapper to scale × this and allow scrolling when zoomed */
+  const [innerLayoutSize, setInnerLayoutSize] = useState({ width: 0, height: 0 });
   const [page1Rect, setPage1Rect] = useState(null);
   /** Per-page rects so fields on page 2+ are positioned correctly (same format as page1Rect: viewport-relative to inner) */
   const [pageRects, setPageRects] = useState([]);
@@ -130,8 +132,19 @@ export default function SigningPage() {
     const ro = new ResizeObserver((entries) => {
       const { width, height } = entries[0]?.contentRect ?? {};
       if (width > 0 && height > 0) setContentSize({ width, height });
+      // Layout size (offsetWidth/offsetHeight) is unchanged by transform:scale, so scroll wrapper can use it * zoom
+      const target = entries[0]?.target;
+      if (target && typeof target.offsetWidth === "number" && typeof target.offsetHeight === "number") {
+        setInnerLayoutSize({ width: target.offsetWidth, height: target.offsetHeight });
+      }
     });
     ro.observe(el);
+    const sync = () => {
+      if (el.offsetWidth > 0 || el.offsetHeight > 0) {
+        setInnerLayoutSize({ width: el.offsetWidth, height: el.offsetHeight });
+      }
+    };
+    sync();
     return () => ro.disconnect();
   }, [showDoc]);
 
@@ -185,11 +198,13 @@ export default function SigningPage() {
     measurePages();
     const t1 = setTimeout(measurePages, 300);
     const t2 = setTimeout(measurePages, 1000);
+    const t3 = setTimeout(measurePages, 2500);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
+      clearTimeout(t3);
     };
-  }, [showDoc, contentSize.width, contentSize.height, zoom, measurePages]);
+  }, [showDoc, fileUrl, contentSize.width, contentSize.height, zoom, measurePages]);
 
   // Scroll document canvas to top when PDF loads so first page is visible
   useEffect(() => {
@@ -270,7 +285,7 @@ export default function SigningPage() {
     if (!info?.signRequest?.signatureFields?.length) return;
     const fields = info.signRequest.signatureFields;
     const fieldValues = info.signRequest.fieldValues || {};
-    const scale = zoom / 200;
+    const scale = zoom / 100;
     const hasSize = contentSize.width > 0 && contentSize.height > 0;
     const page1Rect = contentSize.width && contentSize.height && pageRects.length > 0 ? pageRects[0] : null;
     const scaleFactor = scale;
@@ -287,7 +302,7 @@ export default function SigningPage() {
       const el = textMeasureRefs.current[f.id];
       if (el) {
         const measured = el.getBoundingClientRect().width;
-        const blockWidth = Math.max(100, (f.width || 180) * scaleOverlayX);
+        const blockWidth = (f.width ?? 110) * scaleOverlayX;
         next[f.id] = Math.max(blockWidth, measured + 16);
       }
     }
@@ -343,6 +358,30 @@ export default function SigningPage() {
     return t === "signature" || t === "initial";
   });
   const getFieldKey = (f) => f.id != null && f.id !== "" ? f.id : `field-${f.page ?? 1}-${f.x ?? 0}-${f.y ?? 0}-${(f.type || "text")}`;
+  /** Map formatting-tool color names to CSS color (matches DocumentDetailPage options). */
+  const FONT_COLOR_MAP = {
+    Black: "#000000",
+    White: "#ffffff",
+    Red: "#dc2626",
+    Blue: "#2563eb",
+    Green: "#16a34a",
+    Gray: "#6b7280",
+    "Dark Gray": "#374151",
+  };
+  /** Build inline style for text/data input fields from the field's formatting tool settings. */
+  const getTextFieldFormatStyle = (f) => {
+    const fontSize = Math.max(6, Math.min(24, Number(f.fontSize) || 14));
+    const fontFamily = (f.fontFamily && f.fontFamily.trim()) ? f.fontFamily.trim() : "Lucida Console";
+    const color = FONT_COLOR_MAP[f.fontColor] ?? (f.fontColor && /^#|[a-z]/.test(f.fontColor) ? f.fontColor : "#000000");
+    return {
+      fontSize: `${fontSize}px`,
+      fontFamily: `${fontFamily}, monospace, sans-serif`,
+      fontWeight: f.bold ? "bold" : "normal",
+      fontStyle: f.italic ? "italic" : "normal",
+      textDecoration: f.underline ? "underline" : "none",
+      color,
+    };
+  };
   const allSigFieldsSigned = sigFields.length === 0 || sigFields.every((f) => fieldSignatureData[f.id]) || (signatureData && Object.keys(fieldSignatureData).length === 0);
   const requiredDataFields = fields.filter((f) => {
     if (f.required === false) return false;
@@ -358,10 +397,20 @@ export default function SigningPage() {
   });
   const canComplete = allSigFieldsSigned && allRequiredDataFieldsFilled;
 
-  const scale = zoom / 200;
+  const scale = zoom / 100;
   const hasSize = contentSize.width > 0 && contentSize.height > 0;
   const wrapWidth = hasSize ? Math.round(contentSize.width * scale) : undefined;
-  const wrapHeight = hasSize ? Math.round(contentSize.height * scale) : undefined;
+
+  // Full document size from measured page rects (in rendered/scaled pixels) so scroll area includes all pages
+  const totalDocHeight =
+    pageRects.length > 0
+      ? pageRects[pageRects.length - 1].top + pageRects[pageRects.length - 1].height
+      : 0;
+  const totalDocWidth =
+    pageRects.length > 0
+      ? Math.max(...pageRects.map((r) => r.left + r.width), 0)
+      : 0;
+  const usePageRectsForScroll = pageRects.length > 0 && totalDocHeight > 0 && totalDocWidth > 0;
 
   const scaleFactor = scale;
   const renderW = doc.page1RenderWidth > 0 ? doc.page1RenderWidth : (page1Rect ? page1Rect.width / scaleFactor : contentSize.width);
@@ -428,8 +477,24 @@ export default function SigningPage() {
               <div
                 className="signing-pdf-wrap"
                 style={{
-                  minWidth: hasSize ? `max(100%, ${wrapWidth}px)` : "100%",
-                  minHeight: hasSize ? `max(100%, ${wrapHeight}px)` : "100%",
+                  ...(usePageRectsForScroll
+                    ? {
+                        width: Math.max(totalDocWidth, hasSize ? contentSize.width : 0),
+                        minWidth: hasSize ? `max(100%, ${wrapWidth}px)` : "100%",
+                        height: totalDocHeight,
+                        minHeight: totalDocHeight,
+                      }
+                    : innerLayoutSize.width > 0 && innerLayoutSize.height > 0
+                      ? {
+                          width: Math.max(innerLayoutSize.width * scale, hasSize ? contentSize.width : 0),
+                          minWidth: hasSize ? `max(100%, ${wrapWidth}px)` : "100%",
+                          height: innerLayoutSize.height * scale,
+                          minHeight: innerLayoutSize.height * scale,
+                        }
+                      : {
+                          minWidth: hasSize ? `max(100%, ${wrapWidth}px)` : "100%",
+                          minHeight: "100%",
+                        }),
                 }}
               >
                 <div
@@ -438,6 +503,7 @@ export default function SigningPage() {
                   style={{
                     transform: `scale(${scale})`,
                     transformOrigin: "top center",
+                    ...(doc?.page1RenderWidth > 0 ? { width: doc.page1RenderWidth, maxWidth: doc.page1RenderWidth } : {}),
                   }}
                 >
                   {fileUrl ? (
@@ -458,7 +524,21 @@ export default function SigningPage() {
                   )}
                   {/* Placeholder overlay until Complete (then PDF has the signature, no overlay) */}
                   {!isSigned && (
-                  <div className="signing-fields-overlay">
+                  <div
+                    className="signing-fields-overlay"
+                    style={{
+                      position: "absolute",
+                      left: 0,
+                      top: 0,
+                      right: 0,
+                      bottom: 0,
+                      width: "100%",
+                      height: "100%",
+                      minHeight: 400,
+                      zIndex: 100,
+                      pointerEvents: "none",
+                    }}
+                  >
                     {fields.map((f) => {
                       const typeLower = (f.type || "signature").toLowerCase();
                       const isSig = typeLower === "signature" || typeLower === "initial";
@@ -467,10 +547,18 @@ export default function SigningPage() {
                       const fieldPageRect = pageRects.length >= pageNum ? pageRects[pageNum - 1] : page1Rect;
                       const fieldOffsetX = fieldPageRect ? fieldPageRect.left / scaleFactor : offsetOverlayX;
                       const fieldOffsetY = fieldPageRect ? fieldPageRect.top / scaleFactor : offsetOverlayY;
-                      const left = fieldOffsetX + (Number(f.x) || 0) * scaleOverlayX;
-                      const top = fieldOffsetY + (Number(f.y) || 0) * scaleOverlayY;
-                      const blockHeight = Math.max(24, (f.height || 36) * scaleOverlayY);
-                      const blockWidth = Math.max(100, (f.width || 180) * scaleOverlayX);
+                      // Backend stores x,y (page-relative); support pageX/pageY fallback. Ensure valid numbers so fields always render.
+                      const posX = Number(f.x ?? f.pageX ?? 0) || 0;
+                      const posY = Number(f.y ?? f.pageY ?? 0) || 0;
+                      const leftRaw = fieldOffsetX + posX * scaleOverlayX;
+                      const topRaw = fieldOffsetY + posY * scaleOverlayY;
+                      const left = Number.isFinite(leftRaw) ? leftRaw : (fieldOffsetX || 0);
+                      const top = Number.isFinite(topRaw) ? topRaw : (fieldOffsetY || 0);
+                      /* Match DocumentDetailPage: 110x55 for Signature/Initial, 110x45 for others */
+                      const defW = 110;
+                      const defH = (typeLower === "signature" || typeLower === "initial") ? 55 : 45;
+                      const blockHeight = (f.height ?? defH) * scaleOverlayY;
+                      const blockWidth = (f.width ?? defW) * scaleOverlayX;
 
                       if (isTextField) {
                         const fieldKey = getFieldKey(f);
@@ -479,6 +567,7 @@ export default function SigningPage() {
                         const value = rawValue ?? (typeLower === "text" && (f.addText ?? "").trim() ? f.addText.trim() : "");
                         const label = typeLower === "date" ? "Date signed" : typeLower.charAt(0).toUpperCase() + typeLower.slice(1);
                         const effectiveWidth = textFieldWidths[f.id] ?? blockWidth;
+                        const textFormatStyle = getTextFieldFormatStyle(f);
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -488,13 +577,12 @@ export default function SigningPage() {
                               top,
                               width: effectiveWidth,
                               height: blockHeight,
-                              minWidth: blockWidth,
-                              minHeight: 24,
                             }}
                           >
                             <span
                               ref={(el) => { textMeasureRefs.current[f.id] = el; }}
                               className="signing-field-text-measure"
+                              style={textFormatStyle}
                               aria-hidden
                             >
                               {typeof value === "string" ? value : String(value ?? "")}
@@ -503,6 +591,7 @@ export default function SigningPage() {
                               type={typeLower === "email" ? "email" : typeLower === "date" ? "date" : "text"}
                               inputMode={typeLower === "number" ? "numeric" : "text"}
                               className="signing-field-text-input"
+                              style={textFormatStyle}
                               value={value}
                               readOnly={isReadOnly}
                               disabled={isReadOnly}
@@ -535,8 +624,6 @@ export default function SigningPage() {
                               top,
                               width: blockWidth,
                               height: blockHeight,
-                              minWidth: 100,
-                              minHeight: 24,
                             }}
                           >
                             <select
@@ -567,8 +654,8 @@ export default function SigningPage() {
                       const isInitialField = typeLower === "initial";
                       const hasSigned = !!(fieldSignatureData[f.id] ?? (signatureData && Object.keys(fieldSignatureData).length === 0 ? signatureData : null));
                       const fieldSignature = fieldSignatureData[f.id] || (Object.keys(fieldSignatureData).length === 0 ? signatureData : null);
-                      const sigBlockHeight = Math.max(28, (f.height || 36) * scaleOverlayY);
-                      const sigBlockWidth = Math.max(120, (f.width || 180) * scaleOverlayX);
+                      const sigBlockHeight = (f.height ?? 55) * scaleOverlayY;
+                      const sigBlockWidth = (f.width ?? 110) * scaleOverlayX;
                       return (
                         <div
                           key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -578,8 +665,6 @@ export default function SigningPage() {
                             top,
                             width: sigBlockWidth,
                             height: sigBlockHeight,
-                            minWidth: 120,
-                            minHeight: 28,
                           }}
                         >
                           {hasSigned ? (
@@ -699,8 +784,8 @@ export default function SigningPage() {
           <button
             type="button"
             className="signing-zoom-btn signing-zoom-in"
-            onClick={() => setZoom((z) => Math.min(175, z + 25))}
-            disabled={zoom >= 175}
+            onClick={() => setZoom((z) => Math.min(200, z + 25))}
+            disabled={zoom >= 200}
             aria-label="Zoom in"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -714,8 +799,8 @@ export default function SigningPage() {
           <button
             type="button"
             className="signing-zoom-btn signing-zoom-out"
-onClick={() => setZoom((z) => Math.max(75, z - 25))}
-              disabled={zoom <= 75}
+onClick={() => setZoom((z) => Math.max(100, z - 25))}
+              disabled={zoom <= 100}
             aria-label="Zoom out"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -796,7 +881,7 @@ function SigningFieldSignature({ signatureData, signerName, initials, initialsOn
   const typedInitials = (parts[3] != null && parts[3] !== "") ? parts[3] : initials;
   const displayName = typedName || signerName || "Signed";
   const displayInitials = typedInitials || initials || "—";
-  const fontSize = Math.max(11, Math.min(24, Number(parts[4]) || 14));
+  const fontSize = Math.max(11, Math.min(24, Number(parts[4]) || 28));
 
   const showText = initialsOnly ? displayInitials : displayName;
 

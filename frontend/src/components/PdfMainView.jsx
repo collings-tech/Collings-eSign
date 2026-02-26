@@ -14,11 +14,25 @@ export default function PdfMainView({
   onPageCount,
 }) {
   const [numPages, setNumPages] = useState(null);
+  const [containerWidth, setContainerWidth] = useState(MAIN_PAGE_WIDTH);
   const pageRefs = useRef({});
+  const containerRef = useRef(null);
 
   useEffect(() => {
     setNumPages(null);
   }, [fileUrl]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const { width } = entries[0]?.contentRect ?? {};
+      if (width > 0) setContainerWidth(Math.round(width));
+    });
+    ro.observe(el);
+    setContainerWidth(el.offsetWidth || MAIN_PAGE_WIDTH);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     if (currentPage == null || currentPage < 1) return;
@@ -28,13 +42,15 @@ export default function PdfMainView({
 
   if (!fileUrl) return null;
 
+  const pageWidth = Math.max(280, Math.min(containerWidth, MAIN_PAGE_WIDTH));
+
   const onLoadSuccess = ({ numPages: n }) => {
     setNumPages(n);
     onPageCount?.(n);
   };
 
   return (
-    <div className="pdf-viewer pdf-main-view">
+    <div ref={containerRef} className="pdf-viewer pdf-main-view">
       <Document
         file={fileUrl}
         onLoadSuccess={onLoadSuccess}
@@ -54,7 +70,7 @@ export default function PdfMainView({
               >
                 <Page
                   pageNumber={pageNum}
-                  width={MAIN_PAGE_WIDTH}
+                  width={pageWidth}
                   rotate={rotation}
                   renderTextLayer={true}
                   renderAnnotationLayer={false}

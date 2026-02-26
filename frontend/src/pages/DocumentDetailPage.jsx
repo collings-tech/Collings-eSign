@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useLayoutEffect, useState, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useParams } from "react-router-dom";
 import { apiClient, getProfileImageUrl } from "../api/client";
 import { useAuth } from "../auth/AuthContext.jsx";
@@ -227,20 +228,23 @@ export default function DocumentDetailPage() {
   const [pageToDelete, setPageToDelete] = useState(null);
   const [deletingPage, setDeletingPage] = useState(false);
   const [editValuesModalOpen, setEditValuesModalOpen] = useState(false);
+  const [fieldsPopupOpen, setFieldsPopupOpen] = useState(false); // mobile: fields panel as popup
+  const [rightPanelPopupOpen, setRightPanelPopupOpen] = useState(false); // mobile: Pages/Properties as popup
   const [documentFileKey, setDocumentFileKey] = useState(0);
   const [documentFileUrl, setDocumentFileUrl] = useState(null);
   const dragStartRef = useRef({ fieldX: 0, fieldY: 0, clientX: 0, clientY: 0 });
   const resizeStartRef = useRef({ x: 0, y: 0, w: 0, h: 0, clientX: 0, clientY: 0 });
   const dragTargetRef = useRef(null);
-  const convertedToOverlayRef = useRef(false);
-  const pdfInnerRef = useRef(null);
   const docCanvasRef = useRef(null);
-  const [contentSize, setContentSize] = useState({ width: 0, height: 0 });
+  const prevZoomRef = useRef(zoom);
+  const overlayRef = useRef(null);
 
   const FIELD_SIZE_LIMITS = { minW: 80, maxW: 400, minH: 24, maxH: 120 };
 
-  /** Measure all PDF page positions/sizes so we can send page-relative coords and detect which page a field is on */
-  const getPagePlacementMeasurement = useCallback(() => {
+  /** Cached page measurement (unscaled coords). Updated in useLayoutEffect after DOM/zoom so fields stay in place when zooming. */
+  const [pagePlacementMeasurement, setPagePlacementMeasurement] = useState(null);
+
+  function computePagePlacementMeasurement(scale) {
     const overlay = overlayRef.current;
     const canvas = overlay?.closest?.(".prepare-doc-canvas");
     if (!overlay || !canvas) return null;
@@ -251,7 +255,6 @@ export default function DocumentDetailPage() {
       pageEls = [firstPage];
     }
     const overlayRect = overlay.getBoundingClientRect();
-    const scale = zoom / 100;
     const pages = [];
     for (let i = 0; i < pageEls.length; i++) {
       const el = pageEls[i];
@@ -275,7 +278,20 @@ export default function DocumentDetailPage() {
       pageRenderHeight: first?.pageRenderHeight ?? undefined,
       pages,
     };
-  }, [zoom]);
+  }
+
+  /** Measure after DOM has the current zoom applied so field positions don't jump when zooming. */
+  useLayoutEffect(() => {
+    const scale = zoom / 100;
+    const next = computePagePlacementMeasurement(scale);
+    setPagePlacementMeasurement(next);
+  }, [zoom, documentFileUrl, documentFileKey, pdfPageCount]);
+
+  /** Measure all PDF page positions/sizes. Uses cached measurement so zoom changes don't read stale DOM during render. */
+  const getPagePlacementMeasurement = useCallback(() => {
+    if (pagePlacementMeasurement) return pagePlacementMeasurement;
+    return computePagePlacementMeasurement(zoom / 100);
+  }, [pagePlacementMeasurement, zoom]);
 
   useEffect(() => {
     async function load() {
@@ -306,10 +322,12 @@ export default function DocumentDetailPage() {
             scale: f.scale ?? 100,
             options: Array.isArray(f.options) ? f.options : [],
             defaultOption: f.defaultOption ?? "",
+            page: f.page ?? 1,
+            pageX: f.x,
+            pageY: f.y,
           }))
         );
         setPlacedFields(built);
-        convertedToOverlayRef.current = false;
         if (signerList.length && !selectedRecipientId) {
           setSelectedRecipientId(signerList[0]._id);
         }
@@ -323,30 +341,7 @@ export default function DocumentDetailPage() {
     load();
   }, [id]);
 
-  // Once PDF has rendered, convert loaded (page-relative) field coords to overlay coords for display/drag
-  useEffect(() => {
-    if (placedFields.length === 0 || convertedToOverlayRef.current) return;
-    const timer = setTimeout(() => {
-      const m = getPagePlacementMeasurement();
-      if (!m) return;
-      const pages = m.pages ?? [];
-      const getOffset = (pageNum) => {
-        const p = pages.find((pg) => pg.pageNum === (pageNum || 1));
-        return p ? { offsetX: p.offsetX, offsetY: p.offsetY } : { offsetX: m.offsetX ?? 0, offsetY: m.offsetY ?? 0 };
-      };
-      const hasOffset = pages.length ? pages.some((p) => p.offsetX !== 0 || p.offsetY !== 0) : (m.offsetX !== 0 || m.offsetY !== 0);
-      if (hasOffset) {
-        setPlacedFields((prev) =>
-          prev.map((f) => {
-            const { offsetX, offsetY } = getOffset(f.page);
-            return { ...f, x: f.x + offsetX, y: f.y + offsetY };
-          })
-        );
-        convertedToOverlayRef.current = true;
-      }
-    }, 800);
-    return () => clearTimeout(timer);
-  }, [placedFields.length, getPagePlacementMeasurement]);
+  // Fields loaded from API use pageX/pageY (page-relative); overlay position is computed at render time.
 
   const showDoc = !!(doc?.originalKey || doc?.originalFilePath);
   useEffect(() => {
@@ -363,51 +358,61 @@ export default function DocumentDetailPage() {
     return () => { cancelled = true; };
   }, [doc?._id, doc?.originalKey, doc?.originalFilePath, doc?.signedKey, doc?.signedFilePath]);
 
+  // Keep the same viewport center when zoom changes
   useEffect(() => {
-    if (!showDoc) return;
-    const el = pdfInnerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      const { width, height } = entries[0]?.contentRect ?? {};
-      if (width > 0 && height > 0) setContentSize({ width, height });
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [showDoc]);
-
-  // Keep document centered when zoom changes (zoom from center, not left/right)
-  useEffect(() => {
-    const hasSize = contentSize.width > 0 && contentSize.height > 0;
-    if (!hasSize || !docCanvasRef.current) return;
     const canvas = docCanvasRef.current;
-    const scale = zoom / 100;
-    const wrapW = Math.round(contentSize.width * scale);
-    const wrapH = Math.round(contentSize.height * scale);
-    const centerScroll = () => {
-      if (!canvas) return;
-      const scrollLeft = Math.max(0, (wrapW - canvas.clientWidth) / 2);
-      const scrollTop = Math.max(0, (wrapH - canvas.clientHeight) / 2);
-      canvas.scrollLeft = scrollLeft;
-      canvas.scrollTop = scrollTop;
+    if (!canvas) return;
+
+    const prevScale = (prevZoomRef.current || 100) / 100;
+    const nextScale = (zoom || 100) / 100;
+
+    const prevCenterX = canvas.scrollLeft + canvas.clientWidth / 2;
+    const prevCenterY = canvas.scrollTop + canvas.clientHeight / 2;
+    const unscaledCenterX = prevScale ? prevCenterX / prevScale : prevCenterX;
+    const unscaledCenterY = prevScale ? prevCenterY / prevScale : prevCenterY;
+
+    const apply = () => {
+      const nextCenterX = unscaledCenterX * nextScale;
+      const nextCenterY = unscaledCenterY * nextScale;
+      let nextLeft = nextCenterX - canvas.clientWidth / 2;
+      let nextTop = nextCenterY - canvas.clientHeight / 2;
+
+      const maxLeft = Math.max(0, canvas.scrollWidth - canvas.clientWidth);
+      const maxTop = Math.max(0, canvas.scrollHeight - canvas.clientHeight);
+      nextLeft = Math.min(Math.max(0, nextLeft), maxLeft);
+      nextTop = Math.min(Math.max(0, nextTop), maxTop);
+
+      canvas.scrollLeft = nextLeft;
+      canvas.scrollTop = nextTop;
     };
-    centerScroll();
-    const raf = requestAnimationFrame(centerScroll);
+
+    apply();
+    const raf = requestAnimationFrame(apply);
+    prevZoomRef.current = zoom;
     return () => cancelAnimationFrame(raf);
-  }, [zoom, contentSize.width, contentSize.height]);
+  }, [zoom]);
 
   const TEXT_FORMATTING_FIELDS = ["Name", "Email", "Company", "Title", "Text"];
 
+  // Close mobile fields popup when user selects a field type
+  useEffect(() => {
+    if (fieldsPopupOpen && pendingFieldType) {
+      setFieldsPopupOpen(false);
+    }
+  }, [fieldsPopupOpen, pendingFieldType]);
+
   const addField = useCallback((type, position) => {
     const recipientId = selectedRecipientId || signers[0]?._id;
-    const defaultX = 50;
-    const defaultY = 80 + placedFields.length * 42;
+    const defaultPage = 1;
+    const defaultPageX = 50;
+    const defaultPageY = 80 + placedFields.length * 42;
     const base = {
       id: generateFieldId(),
       type,
       signRequestId: recipientId,
-      page: position?.page ?? 1,
-      x: position?.x ?? defaultX,
-      y: position?.y ?? defaultY,
+      page: position?.page ?? defaultPage,
+      pageX: position?.pageX ?? defaultPageX,
+      pageY: position?.pageY ?? defaultPageY,
       width: type === "Signature" || type === "Initial" ? 110 : 110,
       height: type === "Signature" || type === "Initial" ? 55 : 45,
       required: true,
@@ -451,13 +456,24 @@ export default function DocumentDetailPage() {
     setSelectedFieldId((current) => (current === fieldId ? null : current));
   }, []);
 
+  /** Get overlay (x, y) for rendering; uses page-relative coords when present so layout changes don't move fields. Prefers field.x/y when set (e.g. during drag). */
+  const getFieldOverlayPosition = useCallback((field, measurement) => {
+    if (field.x != null && field.y != null) return { x: field.x, y: field.y };
+    if (field.pageX != null && field.pageY != null && measurement?.pages?.length) {
+      const p = measurement.pages.find((pg) => pg.pageNum === (field.page ?? 1));
+      if (p) return { x: p.offsetX + field.pageX, y: p.offsetY + field.pageY };
+    }
+    return { x: field.x ?? 0, y: field.y ?? 0 };
+  }, []);
+
   /** Check if a field's center is within any document page */
   const isFieldInDocumentArea = useCallback((field, measurement) => {
     if (!measurement?.pages?.length) return true;
+    const pos = getFieldOverlayPosition(field, measurement);
     const w = field.width ?? 110;
     const h = field.height ?? 55;
-    const cx = (field.x ?? 0) + w / 2;
-    const cy = (field.y ?? 0) + h / 2;
+    const cx = pos.x + w / 2;
+    const cy = pos.y + h / 2;
     for (const p of measurement.pages) {
       const pageH = p.pageRenderHeight ?? p.pageRenderWidth;
       if (cx >= p.offsetX && cx <= p.offsetX + p.pageRenderWidth &&
@@ -466,9 +482,7 @@ export default function DocumentDetailPage() {
       }
     }
     return false;
-  }, []);
-
-  const overlayRef = useRef(null);
+  }, [getFieldOverlayPosition]);
 
   /** Convert client coords to overlay-relative coords and resolve page number */
   const clientToOverlayCoords = useCallback((clientX, clientY) => {
@@ -491,6 +505,23 @@ export default function DocumentDetailPage() {
     }
     return { x, y, page };
   }, [zoom, getPagePlacementMeasurement]);
+
+  /** Convert overlay coords to page-relative (page, pageX, pageY) so position survives layout changes */
+  const overlayToPageRelative = useCallback((overlayX, overlayY) => {
+    const measurement = getPagePlacementMeasurement();
+    if (!measurement?.pages?.length) return { page: 1, pageX: overlayX, pageY: overlayY };
+    const cx = overlayX;
+    const cy = overlayY;
+    for (const p of measurement.pages) {
+      const pageH = p.pageRenderHeight ?? p.pageRenderWidth;
+      if (cx >= p.offsetX && cx <= p.offsetX + p.pageRenderWidth &&
+          cy >= p.offsetY && cy <= p.offsetY + pageH) {
+        return { page: p.pageNum, pageX: overlayX - p.offsetX, pageY: overlayY - p.offsetY };
+      }
+    }
+    const first = measurement.pages[0];
+    return { page: first?.pageNum ?? 1, pageX: overlayX - (first?.offsetX ?? 0), pageY: overlayY - (first?.offsetY ?? 0) };
+  }, [getPagePlacementMeasurement]);
 
   /** DocuSign-style: track cursor position over document when a field type is selected */
   useEffect(() => {
@@ -536,20 +567,19 @@ export default function DocumentDetailPage() {
     if (!coords) return;
     const w = pendingFieldWidth;
     const h = pendingFieldHeight;
-    const measurement = getPagePlacementMeasurement();
-    if (measurement?.pages?.length && !isFieldInDocumentArea({ x: coords.x - w / 2, y: coords.y - h / 2, width: w, height: h }, measurement)) {
-      return;
-    }
+    const centerX = coords.x;
+    const centerY = coords.y;
     e.preventDefault();
     e.stopPropagation();
+    const { page, pageX, pageY } = overlayToPageRelative(centerX - w / 2, centerY - h / 2);
     addField(pendingFieldType, {
-      x: coords.x - w / 2,
-      y: coords.y - h / 2,
-      page: coords.page,
+      page,
+      pageX,
+      pageY,
     });
     setPendingFieldType(null);
     setCursorOverlayPos(null);
-  }, [pendingFieldType, addField, clientToOverlayCoords, getPagePlacementMeasurement, isFieldInDocumentArea, pendingFieldWidth, pendingFieldHeight]);
+  }, [pendingFieldType, addField, clientToOverlayCoords, overlayToPageRelative, pendingFieldWidth, pendingFieldHeight]);
 
   const handleFieldPointerDown = useCallback((e, field) => {
     if (e.button !== 0) return;
@@ -560,15 +590,17 @@ export default function DocumentDetailPage() {
     dragTargetRef.current = target;
     setSelectedFieldId(field.id);
     setDraggingFieldId(field.id);
+    const measurement = getPagePlacementMeasurement();
+    const pos = getFieldOverlayPosition(field, measurement);
     dragStartRef.current = {
-      fieldX: field.x,
-      fieldY: field.y,
+      fieldX: pos.x,
+      fieldY: pos.y,
       fieldW: field.width,
       fieldH: field.height,
       clientX: e.clientX,
       clientY: e.clientY,
     };
-  }, []);
+  }, [getPagePlacementMeasurement, getFieldOverlayPosition]);
 
   useEffect(() => {
     if (!draggingFieldId) return;
@@ -591,25 +623,10 @@ export default function DocumentDetailPage() {
     };
     const handlePointerUp = (e) => {
       const target = dragTargetRef.current;
-      const { fieldX, fieldY, fieldW, fieldH } = dragStartRef.current;
-      const measurement = getPagePlacementMeasurement();
-      const fieldAtDrop = { x: fieldX, y: fieldY, width: fieldW, height: fieldH };
-      if (measurement?.pages?.length && fieldW != null && fieldH != null) {
-        const cx = fieldX + fieldW / 2;
-        const cy = fieldY + fieldH / 2;
-        let foundPage = false;
-        for (const p of measurement.pages) {
-          if (cx >= p.offsetX && cx <= p.offsetX + p.pageRenderWidth &&
-              cy >= p.offsetY && cy <= p.offsetY + (p.pageRenderHeight ?? p.pageRenderWidth)) {
-            updateField(draggingFieldId, { page: p.pageNum });
-            foundPage = true;
-            break;
-          }
-        }
-        if (!foundPage) {
-          removeField(draggingFieldId);
-        }
-      }
+      const { fieldX, fieldY } = dragStartRef.current;
+      const { page, pageX, pageY } = overlayToPageRelative(fieldX, fieldY);
+      // Always snap the field back to page-relative coordinates; do not auto-delete on drag
+      updateField(draggingFieldId, { page, pageX, pageY, x: undefined, y: undefined });
       if (target?.releasePointerCapture && e.pointerId !== undefined) {
         try {
           target.releasePointerCapture(e.pointerId);
@@ -626,22 +643,24 @@ export default function DocumentDetailPage() {
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointerleave", handlePointerUp);
     };
-  }, [draggingFieldId, updateField, zoom, getPagePlacementMeasurement]);
+  }, [draggingFieldId, updateField, zoom, overlayToPageRelative]);
 
   const handleResizePointerDown = useCallback((e, field, handle) => {
     e.preventDefault();
     e.stopPropagation();
     setResizingFieldId(field.id);
     setResizeHandle(handle);
+    const measurement = getPagePlacementMeasurement();
+    const pos = getFieldOverlayPosition(field, measurement);
     resizeStartRef.current = {
-      x: field.x,
-      y: field.y,
+      x: pos.x,
+      y: pos.y,
       w: field.width,
       h: field.height,
       clientX: e.clientX,
       clientY: e.clientY,
     };
-  }, []);
+  }, [getPagePlacementMeasurement, getFieldOverlayPosition]);
 
   useEffect(() => {
     if (!resizingFieldId || !resizeHandle) return;
@@ -677,6 +696,9 @@ export default function DocumentDetailPage() {
       const measurement = getPagePlacementMeasurement();
       if (measurement?.pages?.length && !isFieldInDocumentArea({ x, y, width: w, height: h }, measurement)) {
         removeField(fid);
+      } else {
+        const { page, pageX, pageY } = overlayToPageRelative(x, y);
+        updateField(fid, { page, pageX, pageY, x: undefined, y: undefined });
       }
       setResizingFieldId(null);
       setResizeHandle(null);
@@ -687,7 +709,7 @@ export default function DocumentDetailPage() {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [resizingFieldId, resizeHandle, updateField, removeField, zoom, getPagePlacementMeasurement, isFieldInDocumentArea]);
+  }, [resizingFieldId, resizeHandle, updateField, removeField, zoom, getPagePlacementMeasurement, isFieldInDocumentArea, overlayToPageRelative]);
 
   const handleAddSigner = async (e) => {
     e.preventDefault();
@@ -763,13 +785,15 @@ export default function DocumentDetailPage() {
 
   const mapFieldToPayload = useCallback((f, getPageOffset) => {
     const { offsetX, offsetY } = getPageOffset(f.page);
+    const pageX = f.pageX != null ? f.pageX : Math.max(0, (f.x ?? 0) - offsetX);
+    const pageY = f.pageY != null ? f.pageY : Math.max(0, (f.y ?? 0) - offsetY);
     const base = {
       id: f.id,
       signRequestId: f.signRequestId,
       type: fieldTypeToBackend(f.type),
       page: f.page ?? 1,
-      x: Math.max(0, f.x - offsetX),
-      y: Math.max(0, f.y - offsetY),
+      x: pageX,
+      y: pageY,
       width: f.width,
       height: f.height,
       required: f.required,
@@ -915,9 +939,6 @@ export default function DocumentDetailPage() {
 
   const selectedField = placedFields.find((f) => f.id === selectedFieldId);
   const scale = zoom / 100;
-  const hasSize = contentSize.width > 0 && contentSize.height > 0;
-  const wrapWidth = hasSize ? Math.round(contentSize.width * scale) : undefined;
-  const wrapHeight = hasSize ? Math.round(contentSize.height * scale) : undefined;
   const filteredFieldItems = searchFields.trim()
     ? STANDARD_FIELDS.map((g) => ({
         ...g,
@@ -1201,7 +1222,31 @@ export default function DocumentDetailPage() {
         {sendSuccess == null && (
         <>
         <div className="prepare-body">
-          <aside className="prepare-left">
+            <button
+              type="button"
+              className="prepare-fields-fab"
+              onClick={() => setFieldsPopupOpen(true)}
+              aria-label="Open fields panel"
+              title="Add field"
+              style={{ display: rightPanelPopupOpen ? "none" : undefined }}
+            >
+            <span className="prepare-fields-fab-icon">+</span>
+            <span className="prepare-fields-fab-label">Add Field</span>
+          </button>
+
+            <button
+              type="button"
+              className="prepare-right-fab"
+              onClick={() => setRightPanelPopupOpen(true)}
+              aria-label="Open Pages panel"
+              title="Pages"
+              style={{ display: rightPanelPopupOpen ? "none" : undefined }}
+            >
+            <span className="prepare-right-fab-icon">📄</span>
+            <span className="prepare-right-fab-label">Pages</span>
+          </button>
+
+          <aside className="prepare-left prepare-left-desktop">
             <div className="prepare-recipient-select-wrap">
               <label className="prepare-recipient-label">Assign fields to</label>
               <div className="prepare-recipient-select-row">
@@ -1287,17 +1332,124 @@ export default function DocumentDetailPage() {
             </div>
           </aside>
 
+          {fieldsPopupOpen && (
+            <div
+              className="prepare-fields-popup-backdrop"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="prepare-fields-popup-title"
+              onClick={() => setFieldsPopupOpen(false)}
+            >
+              <div
+                className="prepare-fields-popup"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="prepare-fields-popup-header">
+                  <h2 id="prepare-fields-popup-title" className="prepare-fields-popup-title">Add Field</h2>
+                  <button
+                    type="button"
+                    className="prepare-fields-popup-close"
+                    onClick={() => setFieldsPopupOpen(false)}
+                    aria-label="Close"
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="prepare-fields-popup-body">
+                  <div className="prepare-recipient-select-wrap">
+                    <label className="prepare-recipient-label">Assign fields to</label>
+                    <div className="prepare-recipient-select-row">
+                      {selectedRecipientId && (
+                        <span
+                          className="prepare-recipient-dot prepare-recipient-dot-select"
+                          style={{
+                            backgroundColor: getRecipientColor(selectedRecipientId, signers).border,
+                          }}
+                          aria-hidden
+                        />
+                      )}
+                      <select
+                        className="prepare-recipient-select"
+                        value={selectedRecipientId ? String(selectedRecipientId) : ""}
+                        onChange={(e) => setSelectedRecipientId(e.target.value || null)}
+                        aria-label="Select recipient"
+                      >
+                        {signers.map((sr) => (
+                          <option key={sr._id} value={String(sr._id)}>
+                            {sr.signerName || sr.signerEmail || "Recipient"}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="prepare-recipient-legend">
+                      {signers.slice(0, 6).map((sr, idx) => (
+                        <span key={sr._id} className="prepare-recipient-legend-item">
+                          <span
+                            className="prepare-recipient-dot"
+                            style={{ backgroundColor: RECIPIENT_COLORS[idx % RECIPIENT_COLORS.length].border }}
+                            aria-hidden
+                          />
+                          <span className="prepare-recipient-legend-name">
+                            {(sr.signerName || sr.signerEmail || "Recipient").split("@")[0]}
+                          </span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="prepare-search-wrap">
+                    <span className="prepare-search-icon">🔍</span>
+                    <input
+                      type="text"
+                      className="prepare-search-input"
+                      placeholder="Search Fields"
+                      value={searchFields}
+                      onChange={(e) => setSearchFields(e.target.value)}
+                    />
+                    {searchFields && (
+                      <button
+                        type="button"
+                        className="prepare-search-clear"
+                        onClick={() => setSearchFields("")}
+                        aria-label="Clear"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                  <div className="prepare-fields-section">
+                    <h3 className="prepare-fields-title">Standard Fields</h3>
+                    {filteredFieldItems.map((group) => (
+                      <div key={group.group} className="prepare-field-group">
+                        <div className="prepare-field-group-name">{group.group}</div>
+                        <ul className="prepare-field-list">
+                          {group.items.map((item) => (
+                            <li key={item} className="prepare-field-item">
+                              <button
+                                type="button"
+                                className={`prepare-field-btn ${pendingFieldType === item ? "selected" : ""}`}
+                                onClick={() => setPendingFieldType((prev) => (prev === item ? null : item))}
+                                title={pendingFieldType === item ? "Click on document to place field" : "Click to select"}
+                              >
+                                <span className="prepare-field-icon">{FIELD_ICONS[item] || "•"}</span>
+                                {item}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <main className="prepare-center">
             <div ref={docCanvasRef} className="prepare-doc-canvas">
               <div
                 className="prepare-pdf-zoom-wrap"
-                style={{
-                  minWidth: hasSize ? `max(100%, ${wrapWidth}px)` : "100%",
-                  minHeight: hasSize ? `max(100%, ${wrapHeight}px)` : "100%",
-                }}
               >
                 <div
-                  ref={pdfInnerRef}
                   className="prepare-pdf-inner"
                   style={{
                     transform: `scale(${scale})`,
@@ -1344,6 +1496,8 @@ export default function DocumentDetailPage() {
                   </>
                 )}
                 {placedFields.map((f) => {
+                  const measurement = getPagePlacementMeasurement();
+                  const pos = getFieldOverlayPosition(f, measurement);
                   const color = getRecipientColor(f.signRequestId, signers);
                   const isSignatureType = f.type === "Signature" || f.type === "Initial";
                   const isSelected = selectedFieldId === f.id;
@@ -1355,8 +1509,8 @@ export default function DocumentDetailPage() {
                       tabIndex={0}
                       className={`prepare-placed-field ${isSignatureType ? "prepare-placed-field-sign" : ""} ${isSelected ? "selected" : ""} ${draggingFieldId === f.id ? "dragging" : ""} ${resizingFieldId === f.id ? "resizing" : ""}`}
                       style={{
-                        left: f.x,
-                        top: f.y,
+                        left: pos.x,
+                        top: pos.y,
                         width: f.width,
                         height: f.height,
                         borderColor: color.border,
@@ -1395,7 +1549,450 @@ export default function DocumentDetailPage() {
             </div>
           </main>
 
-          <aside className="prepare-right">
+          {rightPanelPopupOpen &&
+            createPortal(
+              <div className="prepare-right-popup-portal">
+                <div
+                  className="prepare-right-popup-backdrop"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setRightPanelPopupOpen(false)}
+                  onKeyDown={(e) => e.key === "Enter" && setRightPanelPopupOpen(false)}
+                  aria-label="Close"
+                  aria-hidden
+                />
+                <aside className="prepare-right prepare-right-popup-panel">
+                  <div className="prepare-right-popup-header">
+                    <h2 className="prepare-right-popup-title">
+                      {selectedField ? selectedField.type : "Pages"}
+                    </h2>
+                    <button
+                      type="button"
+                      className="prepare-right-popup-close"
+                      onClick={() => setRightPanelPopupOpen(false)}
+                      aria-label="Close panel"
+                      title="Close"
+                    >
+                      Close
+                    </button>
+                  </div>
+                  <div className="prepare-right-popup-body">
+                  {selectedField ? (
+              <div className="prepare-properties">
+                <h3 className="prepare-properties-title">
+                  <span className="prepare-properties-icon">{FIELD_ICONS[selectedField.type] || "•"}</span>
+                  {selectedField.type}
+                </h3>
+                {signers.length > 0 && (
+                  <div className="prepare-property-row prepare-property-recipient">
+                    <span className="prepare-property-label">Recipient</span>
+                    <select
+                      value={selectedField.signRequestId ? String(selectedField.signRequestId) : ""}
+                      onChange={(e) => updateField(selectedField.id, { signRequestId: e.target.value || null })}
+                      aria-label="Assign to recipient"
+                      className="prepare-property-select"
+                    >
+                      {signers.map((sr) => (
+                        <option key={sr._id} value={String(sr._id)}>
+                          {sr.signerName || sr.signerEmail || "Recipient"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {selectedField.type === "Name" && (
+                  <div className="prepare-property-row prepare-property-recipient">
+                    <span className="prepare-property-label">Name format</span>
+                    <select
+                      value={selectedField.nameFormat ?? "Full Name"}
+                      onChange={(e) => updateField(selectedField.id, { nameFormat: e.target.value })}
+                      aria-label="Name format"
+                      className="prepare-property-select"
+                    >
+                      <option value="Full Name">Full Name</option>
+                      <option value="First Name">First Name</option>
+                      <option value="Last Name">Last Name</option>
+                    </select>
+                  </div>
+                )}
+                <label className="prepare-property-row prepare-property-check">
+                  <input
+                    type="checkbox"
+                    checked={selectedField.required}
+                    onChange={(e) => updateField(selectedField.id, { required: e.target.checked })}
+                  />
+                  <span>Required Field</span>
+                </label>
+                {["Company", "Title", "Text"].includes(selectedField.type) && (
+                  <label className="prepare-property-row prepare-property-check">
+                    <input
+                      type="checkbox"
+                      checked={selectedField.readOnly}
+                      onChange={(e) => updateField(selectedField.id, { readOnly: e.target.checked })}
+                    />
+                    <span>Read Only</span>
+                  </label>
+                )}
+                {selectedField.type === "Text" && (
+                  <div className="prepare-property-section prepare-property-section-expanded">
+                    <button type="button" className="prepare-property-section-head">
+                      Add Text ▾
+                    </button>
+                    <div className="prepare-property-section-body">
+                      <label className="prepare-property-row">
+                        <textarea
+                          value={selectedField.addText ?? ""}
+                          onChange={(e) => updateField(selectedField.id, { addText: e.target.value })}
+                          placeholder="Add Text"
+                          rows={3}
+                        />
+                      </label>
+                      <label className="prepare-property-row">
+                        <span>Character Limit</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={10000}
+                          value={selectedField.characterLimit ?? 4000}
+                          onChange={(e) =>
+                            updateField(selectedField.id, { characterLimit: Math.max(1, Number(e.target.value) || 4000) })
+                          }
+                        />
+                      </label>
+                    </div>
+                  </div>
+                )}
+                {(selectedField.type === "Dropdown" || selectedField.type === "Radio") && (
+                  <div className="prepare-property-section prepare-property-section-expanded">
+                    <button type="button" className="prepare-property-section-head">
+                      Options ▾
+                    </button>
+                    <div className="prepare-property-section-body">
+                      <p className="prepare-property-hint">Fill in the list of options.</p>
+                      {(selectedField.options || []).map((opt, idx) => (
+                        <div key={idx} className="prepare-property-option-row">
+                          <input
+                            type="text"
+                            value={opt.label ?? opt.value ?? ""}
+                            onChange={(e) => {
+                              const opts = [...(selectedField.options || [])];
+                              const prev = opts[idx];
+                              const newLabel = e.target.value;
+                              const prevLabel = prev?.label ?? prev?.value ?? "";
+                              const prevValue = prev?.value ?? prev?.label ?? "";
+                              const valueStayedInSyncWithLabel = prevLabel === prevValue;
+                              opts[idx] = {
+                                label: newLabel,
+                                value: valueStayedInSyncWithLabel ? newLabel : prevValue,
+                              };
+                              updateField(selectedField.id, { options: opts });
+                            }}
+                            placeholder="Option"
+                            className="prepare-property-option-input"
+                          />
+                          <button
+                            type="button"
+                            className="prepare-property-option-remove"
+                            onClick={() => {
+                              const opts = (selectedField.options || []).filter((_, i) => i !== idx);
+                              const def = selectedField.defaultOption;
+                              const removed = selectedField.options?.[idx];
+                              const sameAsRemoved = removed && (def === (removed.value ?? removed.label));
+                              updateField(selectedField.id, {
+                                options: opts,
+                                defaultOption: sameAsRemoved ? "" : def,
+                              });
+                            }}
+                            aria-label="Remove option"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        className="prepare-property-add-option"
+                        onClick={() => {
+                          const opts = [...(selectedField.options || []), { label: "New option", value: "New option" }];
+                          updateField(selectedField.id, { options: opts });
+                        }}
+                      >
+                        + ADD OPTION
+                      </button>
+                      <label className="prepare-property-row prepare-property-default-option">
+                        <span>Default Option</span>
+                        <select
+                          value={selectedField.defaultOption ?? ""}
+                          onChange={(e) => updateField(selectedField.id, { defaultOption: e.target.value })}
+                          className="prepare-property-select"
+                          aria-label="Default option"
+                        >
+                          <option value="">-- Select --</option>
+                          {(selectedField.options || []).map((opt, idx) => {
+                            const v = opt.value ?? opt.label ?? "";
+                            return (
+                              <option key={idx} value={v}>
+                                {opt.label ?? opt.value ?? v}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="prepare-property-edit-values"
+                        onClick={() => setEditValuesModalOpen(true)}
+                      >
+                        EDIT VALUES
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div className="prepare-property-section">
+                  <button type="button" className="prepare-property-section-head">
+                    Formatting ▾
+                  </button>
+                  <div className="prepare-property-section-body">
+                    {["Name", "Email", "Company", "Title", "Text"].includes(selectedField.type) ? (
+                      <>
+                        <label className="prepare-property-row">
+                          <span>Font</span>
+                          <select
+                            value={selectedField.fontFamily ?? "Lucida Console"}
+                            onChange={(e) => updateField(selectedField.id, { fontFamily: e.target.value })}
+                            className="prepare-property-select"
+                            aria-label="Font family"
+                          >
+                            <option value="Lucida Console">Lucida Console</option>
+                            <option value="Arial">Arial</option>
+                            <option value="Times New Roman">Times New Roman</option>
+                            <option value="Georgia">Georgia</option>
+                            <option value="Courier New">Courier New</option>
+                            <option value="Verdana">Verdana</option>
+                          </select>
+                        </label>
+                        <label className="prepare-property-row prepare-property-row-inline">
+                          <span>Font Size</span>
+                          <select
+                            value={String(selectedField.fontSize ?? 14)}
+                            onChange={(e) => updateField(selectedField.id, { fontSize: Number(e.target.value) || 14 })}
+                            className="prepare-property-select prepare-property-select-narrow"
+                            aria-label="Font size"
+                          >
+                            {[6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20].map((n) => (
+                              <option key={n} value={n}>{n}</option>
+                            ))}
+                          </select>
+                          <div className="prepare-property-style-btns">
+                            <button
+                              type="button"
+                              className={`prepare-property-style-btn ${selectedField.bold ? "active" : ""}`}
+                              onClick={() => updateField(selectedField.id, { bold: !selectedField.bold })}
+                              aria-label="Bold"
+                              title="Bold"
+                            >
+                              B
+                            </button>
+                            <button
+                              type="button"
+                              className={`prepare-property-style-btn ${selectedField.italic ? "active" : ""}`}
+                              onClick={() => updateField(selectedField.id, { italic: !selectedField.italic })}
+                              aria-label="Italic"
+                              title="Italic"
+                            >
+                              I
+                            </button>
+                            <button
+                              type="button"
+                              className={`prepare-property-style-btn ${selectedField.underline ? "active" : ""}`}
+                              onClick={() => updateField(selectedField.id, { underline: !selectedField.underline })}
+                              aria-label="Underline"
+                              title="Underline"
+                            >
+                              U
+                            </button>
+                          </div>
+                        </label>
+                        <label className="prepare-property-row">
+                          <span>Color</span>
+                          <select
+                            value={selectedField.fontColor ?? "Black"}
+                            onChange={(e) => updateField(selectedField.id, { fontColor: e.target.value })}
+                            className="prepare-property-select"
+                            aria-label="Font color"
+                          >
+                            <option value="Black">Black</option>
+                            <option value="White">White</option>
+                            <option value="Red">Red</option>
+                            <option value="Blue">Blue</option>
+                            <option value="Green">Green</option>
+                            <option value="Gray">Gray</option>
+                            <option value="Dark Gray">Dark Gray</option>
+                          </select>
+                        </label>
+                        {selectedField.type === "Text" && (
+                          <>
+                            <label className="prepare-property-row prepare-property-check">
+                              <input
+                                type="checkbox"
+                                checked={selectedField.hideWithAsterisks}
+                                onChange={(e) => updateField(selectedField.id, { hideWithAsterisks: e.target.checked })}
+                              />
+                              <span>Hide text with asterisks</span>
+                            </label>
+                            <label className="prepare-property-row prepare-property-check">
+                              <input
+                                type="checkbox"
+                                checked={selectedField.fixedWidth}
+                                onChange={(e) => updateField(selectedField.id, { fixedWidth: e.target.checked })}
+                              />
+                              <span>Fixed Width</span>
+                            </label>
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <label className="prepare-property-row">
+                        <span>Scale %</span>
+                        <input
+                          type="number"
+                          min={50}
+                          max={200}
+                          value={selectedField.scale}
+                          onChange={(e) =>
+                            updateField(selectedField.id, { scale: Number(e.target.value) || 100 })
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+                <div className="prepare-property-section">
+                  <button type="button" className="prepare-property-section-head">
+                    Data Label ▾
+                  </button>
+                  <div className="prepare-property-section-body">
+                    <label className="prepare-property-row">
+                      <input
+                        type="text"
+                        value={selectedField.dataLabel}
+                        onChange={(e) =>
+                          updateField(selectedField.id, { dataLabel: e.target.value })
+                        }
+                        placeholder="Data label"
+                      />
+                    </label>
+                  </div>
+                </div>
+                <div className="prepare-property-section">
+                  <button type="button" className="prepare-property-section-head">
+                    Tooltip ▾
+                  </button>
+                  <div className="prepare-property-section-body">
+                    <label className="prepare-property-row">
+                      <textarea
+                        value={selectedField.tooltip}
+                        onChange={(e) =>
+                          updateField(selectedField.id, { tooltip: e.target.value })
+                        }
+                        placeholder="Tooltip text"
+                        rows={2}
+                      />
+                    </label>
+                  </div>
+                </div>
+                <div className="prepare-property-section">
+                  <button type="button" className="prepare-property-section-head">
+                    Location ▾
+                  </button>
+                  <div className="prepare-property-section-body">
+                    {(() => {
+                      const measurement = getPagePlacementMeasurement();
+                      const locationPos = getFieldOverlayPosition(selectedField, measurement);
+                      return (
+                        <>
+                          <label className="prepare-property-row">
+                            <span>Pixels from Left</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={Math.round(locationPos.x)}
+                              onChange={(e) => {
+                                const newX = Number(e.target.value) || 0;
+                                const m = getPagePlacementMeasurement();
+                                const pos = getFieldOverlayPosition(selectedField, m);
+                                const { page, pageX, pageY } = overlayToPageRelative(newX, pos.y);
+                                updateField(selectedField.id, { page, pageX, pageY, x: undefined, y: undefined });
+                              }}
+                            />
+                          </label>
+                          <label className="prepare-property-row">
+                            <span>Pixels from Top</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={Math.round(locationPos.y)}
+                              onChange={(e) => {
+                                const newY = Number(e.target.value) || 0;
+                                const m = getPagePlacementMeasurement();
+                                const pos = getFieldOverlayPosition(selectedField, m);
+                                const { page, pageX, pageY } = overlayToPageRelative(pos.x, newY);
+                                updateField(selectedField.id, { page, pageX, pageY, x: undefined, y: undefined });
+                              }}
+                            />
+                          </label>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+                <div className="prepare-property-actions">
+                  <button type="button" className="prepare-btn secondary prepare-btn-block">
+                    SAVE AS CUSTOM FIELD
+                  </button>
+                  <button
+                    type="button"
+                    className="prepare-btn prepare-btn-danger prepare-btn-block"
+                    onClick={() => removeField(selectedField.id)}
+                  >
+                    DELETE
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <h3 className="prepare-right-panel-title">Pages</h3>
+                <div className="prepare-thumbnails-header">
+                  <span className="prepare-thumbnails-title">{doc.title || "Document"}</span>
+                  {pdfPageCount != null && (
+                    <span className="prepare-thumbnails-pages">Pages: {pdfPageCount}</span>
+                  )}
+                </div>
+                <div className="prepare-thumbnails-list">
+                  <PdfThumbnails
+                    fileUrl={fileUrl}
+                    onPageCount={setPdfPageCount}
+                    onPageSelect={setCurrentPage}
+                    onRotate={(pageNum) => {
+                      setPageRotations((prev) => ({
+                        ...prev,
+                        [pageNum]: ((prev[pageNum] || 0) + 90) % 360,
+                      }));
+                    }}
+                    onDelete={(pageNum) => setPageToDelete(pageNum)}
+                    pageRotations={pageRotations}
+                    currentPage={currentPage}
+                  />
+                </div>
+              </>
+            )}
+                  </div>
+                </aside>
+              </div>,
+              document.body
+            )}
+
+          <aside className="prepare-right prepare-right-desktop">
             {selectedField ? (
               <div className="prepare-properties">
                 <h3 className="prepare-properties-title">
@@ -1725,28 +2322,44 @@ export default function DocumentDetailPage() {
                     Location ▾
                   </button>
                   <div className="prepare-property-section-body">
-                    <label className="prepare-property-row">
-                      <span>Pixels from Left</span>
-                      <input
-                        type="number"
-                        min={0}
-                        value={Math.round(selectedField.x)}
-                        onChange={(e) =>
-                          updateField(selectedField.id, { x: Number(e.target.value) || 0 })
-                        }
-                      />
-                    </label>
-                    <label className="prepare-property-row">
-                      <span>Pixels from Top</span>
-                      <input
-                        type="number"
-                        min={0}
-                        value={Math.round(selectedField.y)}
-                        onChange={(e) =>
-                          updateField(selectedField.id, { y: Number(e.target.value) || 0 })
-                        }
-                      />
-                    </label>
+                    {(() => {
+                      const measurement = getPagePlacementMeasurement();
+                      const locationPos = getFieldOverlayPosition(selectedField, measurement);
+                      return (
+                        <>
+                          <label className="prepare-property-row">
+                            <span>Pixels from Left</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={Math.round(locationPos.x)}
+                              onChange={(e) => {
+                                const newX = Number(e.target.value) || 0;
+                                const m = getPagePlacementMeasurement();
+                                const pos = getFieldOverlayPosition(selectedField, m);
+                                const { page, pageX, pageY } = overlayToPageRelative(newX, pos.y);
+                                updateField(selectedField.id, { page, pageX, pageY, x: undefined, y: undefined });
+                              }}
+                            />
+                          </label>
+                          <label className="prepare-property-row">
+                            <span>Pixels from Top</span>
+                            <input
+                              type="number"
+                              min={0}
+                              value={Math.round(locationPos.y)}
+                              onChange={(e) => {
+                                const newY = Number(e.target.value) || 0;
+                                const m = getPagePlacementMeasurement();
+                                const pos = getFieldOverlayPosition(selectedField, m);
+                                const { page, pageX, pageY } = overlayToPageRelative(pos.x, newY);
+                                updateField(selectedField.id, { page, pageX, pageY, x: undefined, y: undefined });
+                              }}
+                            />
+                          </label>
+                        </>
+                      );
+                    })()}
                   </div>
                 </div>
                 <div className="prepare-property-actions">
