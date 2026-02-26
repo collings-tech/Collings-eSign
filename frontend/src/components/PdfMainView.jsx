@@ -7,14 +7,22 @@ pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.vers
 
 const MAIN_PAGE_WIDTH = 800;
 
+/**
+ * PdfMainView renders PDF pages. Each page is wrapped in a PageWrapper (position: relative)
+ * with an optional OverlayLayer (position: absolute; inset: 0) so fields can be positioned
+ * with percentages relative to that page. This survives zoom, mobile, and resizing.
+ */
 export default function PdfMainView({
   fileUrl,
   pageRotations = {},
   currentPage,
   onPageCount,
+  fixedPageWidth,
+  /** Render overlay content for each page. Receives pageNum. Overlay is position: absolute; inset: 0. */
+  renderPageOverlay,
 }) {
   const [numPages, setNumPages] = useState(null);
-  const [containerWidth, setContainerWidth] = useState(MAIN_PAGE_WIDTH);
+  const [containerWidth, setContainerWidth] = useState(fixedPageWidth ?? MAIN_PAGE_WIDTH);
   const pageRefs = useRef({});
   const containerRef = useRef(null);
 
@@ -23,6 +31,10 @@ export default function PdfMainView({
   }, [fileUrl]);
 
   useEffect(() => {
+    if (fixedPageWidth != null && fixedPageWidth > 0) {
+      setContainerWidth(fixedPageWidth);
+      return;
+    }
     const el = containerRef.current;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
@@ -32,7 +44,7 @@ export default function PdfMainView({
     ro.observe(el);
     setContainerWidth(el.offsetWidth || MAIN_PAGE_WIDTH);
     return () => ro.disconnect();
-  }, []);
+  }, [fixedPageWidth]);
 
   useEffect(() => {
     if (currentPage == null || currentPage < 1) return;
@@ -42,7 +54,9 @@ export default function PdfMainView({
 
   if (!fileUrl) return null;
 
-  const pageWidth = Math.max(280, Math.min(containerWidth, MAIN_PAGE_WIDTH));
+  const pageWidth = fixedPageWidth != null && fixedPageWidth > 0
+    ? fixedPageWidth
+    : Math.max(280, Math.min(containerWidth, MAIN_PAGE_WIDTH));
 
   const onLoadSuccess = ({ numPages: n }) => {
     setNumPages(n);
@@ -50,7 +64,11 @@ export default function PdfMainView({
   };
 
   return (
-    <div ref={containerRef} className="pdf-viewer pdf-main-view">
+    <div
+      ref={containerRef}
+      className="pdf-viewer pdf-main-view"
+      style={fixedPageWidth != null && fixedPageWidth > 0 ? { width: fixedPageWidth, minWidth: fixedPageWidth, maxWidth: fixedPageWidth } : undefined}
+    >
       <Document
         file={fileUrl}
         onLoadSuccess={onLoadSuccess}
@@ -66,7 +84,7 @@ export default function PdfMainView({
                 key={pageNum}
                 ref={(el) => { pageRefs.current[pageNum] = el; }}
                 data-rp={`page-${pageNum}`}
-                className="pdf-main-view-page"
+                className="pdf-main-view-page pdf-page-wrapper"
               >
                 <Page
                   pageNumber={pageNum}
@@ -75,6 +93,11 @@ export default function PdfMainView({
                   renderTextLayer={true}
                   renderAnnotationLayer={false}
                 />
+                {renderPageOverlay && (
+                  <div className="pdf-page-overlay" style={{ position: "absolute", inset: 0, zIndex: 10 }}>
+                    {renderPageOverlay(pageNum)}
+                  </div>
+                )}
               </div>
             );
           })}

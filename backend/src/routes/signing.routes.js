@@ -100,7 +100,7 @@ router.get('/:token', async (req, res) => {
         signerName: signReq.signerName,
         signerEmail: signReq.signerEmail,
         status: signReq.status,
-        signatureFields: signReq.signatureFields,
+        signatureFields: Array.isArray(signReq.signatureFields) ? signReq.signatureFields : [],
         ...(signReq.signatureData ? { signatureData: signReq.signatureData } : {}),
         ...(signReq.fieldSignatureData && Object.keys(signReq.fieldSignatureData).length > 0 ? { fieldSignatureData: signReq.fieldSignatureData } : {}),
         ...(signReq.fieldValues && Object.keys(signReq.fieldValues).length > 0 ? { fieldValues: signReq.fieldValues } : {}),

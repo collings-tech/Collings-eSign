@@ -311,7 +311,9 @@ router.put('/:id/signing-fields', requireAuth, async (req, res) => {
     const { fields = [], page1RenderWidth, page1RenderHeight } = req.body;
     if (page1RenderWidth != null && Number(page1RenderWidth) > 0) {
       doc.page1RenderWidth = Number(page1RenderWidth);
-      doc.page1RenderHeight = page1RenderHeight != null && Number(page1RenderHeight) > 0 ? Number(page1RenderHeight) : undefined;
+      doc.page1RenderHeight = (page1RenderHeight != null && Number(page1RenderHeight) > 0)
+        ? Number(page1RenderHeight)
+        : Math.round(Number(page1RenderWidth) * (11 / 8.5));
       await doc.save();
     }
     const signReqs = await SignRequest.find({ documentId: doc._id });
@@ -330,13 +332,23 @@ router.put('/:id/signing-fields', requireAuth, async (req, res) => {
             label: String(o.label ?? o.value ?? '').slice(0, 200),
             value: String(o.value ?? o.label ?? '').slice(0, 200),
           })) : undefined;
+          const hasPct = f.xPct != null && f.yPct != null && f.wPct != null && f.hPct != null;
+          const toNum = (v, fallback) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? n : fallback;
+          };
+          // When percent coords are used, x/y/width/height are placeholders (pdfSign uses percent for embedding)
           const fieldData = {
             id: f.id || undefined,
             page: Number(f.page) || 1,
-            x: Number(f.x) || 0,
-            y: Number(f.y) || 0,
-            width: Number(f.width) || 160,
-            height: Number(f.height) || 36,
+            xPct: hasPct ? Number(f.xPct) : undefined,
+            yPct: hasPct ? Number(f.yPct) : undefined,
+            wPct: hasPct ? Number(f.wPct) : undefined,
+            hPct: hasPct ? Number(f.hPct) : undefined,
+            x: toNum(f.x, toNum(f.pageX, 0)),
+            y: toNum(f.y, toNum(f.pageY, 0)),
+            width: toNum(f.width, 160),
+            height: toNum(f.height, 36),
             type: normalizeType(f.type),
             required: f.required !== false,
             dataLabel: String(f.dataLabel || '').slice(0, 200),

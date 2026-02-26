@@ -8,6 +8,11 @@ const signatureFieldSchema = new mongoose.Schema(
     y: { type: Number, required: true },
     width: { type: Number, required: true },
     height: { type: Number, required: true },
+    /** Percent-based coords (preferred): % of page width/height, survives zoom/resize. */
+    xPct: { type: Number },
+    yPct: { type: Number },
+    wPct: { type: Number },
+    hPct: { type: Number },
     type: { type: String, enum: ['signature', 'initial', 'text', 'date', 'name', 'email', 'stamp', 'company', 'title', 'number', 'checkbox', 'dropdown', 'radio'], default: 'signature' },
     required: { type: Boolean, default: true },
     dataLabel: { type: String, default: '' },

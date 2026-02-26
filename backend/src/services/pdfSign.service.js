@@ -80,9 +80,41 @@ async function embedBorderImage(pdfDoc) {
   }
 }
 
-// When frontend sends page-relative coords + page1RenderWidth/Height, we use them for exact placement.
-// Fallback when doc has no stored render size (legacy or prepare view didn't send it).
-const FALLBACK_RENDER_WIDTH = 800;
+// Prefer percent-based coords (survives zoom, mobile, resizing). Fallback to px coords for legacy.
+
+/**
+ * Convert field to PDF box: { x, yPdf, w, h }.
+ * Prefers xPct, yPct, wPct, hPct when present (percent of page, top-left origin).
+ * PDF uses points, bottom-left origin. Y conversion: pdfY = pageHeight - topY - h.
+ */
+function fieldToPdfBox(f, pageWidth, pageHeight) {
+  const defW = 120;
+  const defH = 24;
+  let x, w, topY, h;
+  if (f.xPct != null && f.yPct != null && f.wPct != null && f.hPct != null) {
+    // Percent-based (recommended)
+    x = (Number(f.xPct) / 100) * pageWidth;
+    w = (Number(f.wPct) / 100) * pageWidth;
+    topY = (Number(f.yPct) / 100) * pageHeight;
+    h = (Number(f.hPct) / 100) * pageHeight;
+  } else {
+    // Legacy: x, y, width, height in render space - scale to PDF
+    const renderW = 800;
+    const renderH = (pageHeight / pageWidth) * renderW;
+    const scaleX = pageWidth / renderW;
+    const scaleY = pageHeight / renderH;
+    const posX = f.x != null ? Number(f.x) : (f.pageX != null ? Number(f.pageX) : 0);
+    const posY = f.y != null ? Number(f.y) : (f.pageY != null ? Number(f.pageY) : 0);
+    x = posX * scaleX;
+    topY = posY * scaleY;
+    w = (Number(f.width) ?? defW) * scaleX;
+    h = (Number(f.height) ?? defH) * scaleY;
+  }
+  const yPdf = pageHeight - topY - h;
+  const xClamp = Math.max(0, Math.min(x, pageWidth - w));
+  const yPdfClamp = Math.max(0, Math.min(yPdf, pageHeight - h));
+  return { x: xClamp, yPdf: yPdfClamp, w, h };
+}
 
 /**
  * Embed the signer's signature into the document PDF and save.
@@ -134,6 +166,7 @@ async function embedSignatureInPdf(doc, signRequest) {
     const t = String(f.type || "signature").toLowerCase();
     return t === "signature" || t === "initial";
   }).length;
+  const firstPage = pages[0] || null;
   console.log("[pdfSign] Embedding signature:", { fields: fields.length, sigFields: sigFieldCount, useStorage });
 
   for (const f of fields) {
@@ -189,25 +222,12 @@ async function embedSignatureInPdf(doc, signRequest) {
 
     const pageWidth = page.getWidth();
     const pageHeight = page.getHeight();
-    const renderW = doc.page1RenderWidth > 0 ? doc.page1RenderWidth : FALLBACK_RENDER_WIDTH;
-    const renderH = doc.page1RenderHeight > 0 ? doc.page1RenderHeight : (pageHeight / pageWidth) * renderW;
-    const scaleX = pageWidth / renderW;
-    const scaleY = pageHeight / renderH;
-    const xRaw = (Number(f.x) || 0) * scaleX;
-    const y = (Number(f.y) || 0) * scaleY;
-    const w = Math.max(20, Math.min((Number(f.width) || 160) * scaleX, pageWidth - 40));
-    const h = Math.max(20, Math.min((Number(f.height) || 36) * scaleY, pageHeight - 40));
-    const x = Math.max(0, Math.min(xRaw, pageWidth - w));
-    // yPdf = bottom-edge of box in PDF coords (y is from top in render space). Clamp so box stays on page.
-    let yPdf = pageHeight - y - h;
-    if (yPdf < 0) yPdf = 0;
-    if (yPdf + h > pageHeight) yPdf = pageHeight - h;
-
-    const pad = BORDER_PADDING * Math.min(scaleX, scaleY);
-    const innerX = x + pad;
-    const innerY = yPdf + pad;
-    const innerW = Math.max(1, w - 2 * pad);
-    const innerH = Math.max(1, h - 2 * pad);
+    const box = fieldToPdfBox(f, pageWidth, pageHeight);
+    const { x, yPdf, w, h } = box;
+    const innerX = x;
+    const innerY = yPdf;
+    const innerW = w;
+    const innerH = h;
 
     const black = rgb(0, 0, 0);
     const signedById = signRequest._id ? String(signRequest._id).replace(/-/g, "").slice(-16) : "";
@@ -242,7 +262,7 @@ async function embedSignatureInPdf(doc, signRequest) {
         const sigDims = embeddedImage.scaleToFit(innerW, sigH);
         const sigYc = sigY + (sigH - sigDims.height) / 2;
         page.drawImage(embeddedImage, {
-          x: x+5,
+          x: innerX,
           y: sigYc,
           width: sigDims.width,
           height: sigDims.height,
@@ -279,9 +299,9 @@ async function embedSignatureInPdf(doc, signRequest) {
         }
         const textY = sigTextY + sigTextH / 2 - fontSizePt / 2;
         const drawOpts = {
-          x: x+5,
-          y: textY-3,
-          size: fontSizePt+7,
+          x: innerX + 7,
+          y: textY + 3,
+          size: fontSizePt + 4,
           color: black,
         };
         if (embeddedTypedFont) drawOpts.font = embeddedTypedFont;
@@ -295,9 +315,9 @@ async function embedSignatureInPdf(doc, signRequest) {
         const fallbackFontSize = Math.min(12, Math.max(8, innerH * 0.4));
         const fallbackY = innerY + innerH / 2 - fallbackFontSize / 2;
         page.drawText(signerName, {
-          x: innerX + SIG_TEXT_MARGIN_H,
+          x: innerX,
           y: fallbackY,
-          size: fallbackFontSize,
+          size: fallbackFontSize + 4,
           font: helvetica,
           color: black,
         });
@@ -308,9 +328,9 @@ async function embedSignatureInPdf(doc, signRequest) {
 
     try {
       page.drawText("Signed by:", {
-        x: x+10,
-        y: labelY +2,
-        size: labelH+1,
+        x: innerX + 7,
+        y: labelY-2,
+        size: labelH+2,
         font: helvetica,
         color: black,
       });
@@ -321,9 +341,9 @@ async function embedSignatureInPdf(doc, signRequest) {
     if (signedById) {
       try {
         page.drawText(signedById, {
-          x: x+5,
-          y: idY-3,
-          size: idH,
+          x: innerX + 7,
+          y: idY,
+          size: idH + 2,
           font: helvetica,
           color: black,
         });
@@ -393,31 +413,17 @@ async function embedSignatureInPdf(doc, signRequest) {
 
     const pageWidth = page.getWidth();
     const pageHeight = page.getHeight();
-    const renderW = doc.page1RenderWidth > 0 ? doc.page1RenderWidth : FALLBACK_RENDER_WIDTH;
-    const renderH = doc.page1RenderHeight > 0 ? doc.page1RenderHeight : (pageHeight / pageWidth) * renderW;
-    const scaleX = pageWidth / renderW;
-    const scaleY = pageHeight / renderH;
-    const xRaw = (Number(f.x) || 0) * scaleX;
-    const y = (Number(f.y) || 0) * scaleY;
-    const w = Math.max(20, Math.min((Number(f.width) || 120) * scaleX, pageWidth - 40));
-    const h = Math.max(14, Math.min((Number(f.height) || 24) * scaleY, pageHeight - 40));
-    const x = Math.max(0, Math.min(xRaw, pageWidth - w));
-    let yPdf = pageHeight - y - h;
-    if (yPdf < 0) yPdf = 0;
-    if (yPdf + h > pageHeight) yPdf = pageHeight - h;
-
-    const pad = BORDER_PADDING * Math.min(scaleX, scaleY);
-    const innerX = x + pad;
-    const innerY = yPdf + pad;
-    const innerW = Math.max(1, w - 2 * pad);
-    const innerH = Math.max(1, h - 2 * pad);
+    const box = fieldToPdfBox(f, pageWidth, pageHeight);
+    const { x, yPdf, w: innerW, h: innerH } = box;
+    const innerX = x;
+    const innerY = yPdf;
 
     const text = String(value).trim();
     let fontSizePt = f.fontSize != null && f.fontSize > 0 ? Math.min(72, Math.max(6, Number(f.fontSize))) : Math.min(12, Math.max(8, innerH * 0.7));
     if (!Number.isFinite(fontSizePt) || fontSizePt <= 0) fontSizePt = 10;
     const textColor = getTextColor(f.fontColor);
-    const textX = innerX;
-    const textY = innerY + innerH / 2 - fontSizePt / 2;
+    const textX = innerX + 1;
+    const textY = innerY + Math.min(3, innerH * 0.15);
 
     try {
       const textFont = await getTextFont(pdfDoc, f);

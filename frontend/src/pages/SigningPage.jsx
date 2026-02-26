@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
-import PdfViewer from "../components/PdfViewer.jsx";
+import PdfMainView from "../components/PdfMainView.jsx";
 import AdoptSignatureModal from "../components/AdoptSignatureModal.jsx";
 import collingsLogo from "../assets/collings-logo-1.png";
 
@@ -109,6 +109,7 @@ export default function SigningPage() {
   }, [token]);
 
   // Fetch view URL for PDF when info is available. Refetch when info changes (e.g. after complete → signed PDF).
+  // Skip refetch when we already have a URL and only signature state changed (e.g. after Adopt and Sign) so the document doesn't reload.
   useEffect(() => {
     if (!info) {
       setFileUrl(null);
@@ -120,8 +121,12 @@ export default function SigningPage() {
       }
       return;
     }
+    const isSigned = info?.signRequest?.status === "signed";
+    if (fileUrl && !isSigned) {
+      return; // Keep existing PDF; only refresh URL when we don't have one or when envelope is signed (need signed PDF)
+    }
     fetchFileUrl();
-  }, [info, fetchFileUrl]);
+  }, [info, fetchFileUrl, fileUrl]);
 
   // ResizeObserver must run at top level (same hook order every render)
   const showDoc = !!info;
@@ -148,15 +153,18 @@ export default function SigningPage() {
     return () => ro.disconnect();
   }, [showDoc]);
 
-  // Measure all PDF page positions/sizes so overlay matches prepare-view placement (including page 2+)
+  // Measure all PDF page positions/sizes (same approach as DocumentDetailPage: data-rp="page-N" from PdfMainView)
   const measurePages = useCallback(() => {
     const inner = pdfInnerRef.current;
     if (!inner) return;
     const innerRect = inner.getBoundingClientRect();
-    // react-pdf-viewer: .rpv-core__inner-page per page; fallback: data-rp="page-N" (react-pdf) or single .rpv-core__page-layer
-    let pageEls = Array.from(inner.querySelectorAll(".rpv-core__inner-page"));
+    // PdfMainView (react-pdf) uses data-rp="page-N" - match DocumentDetailPage
+    let pageEls = Array.from(inner.querySelectorAll('[data-rp^="page-"]'));
     if (pageEls.length === 0) {
-      pageEls = Array.from(inner.querySelectorAll('[data-rp^="page-"]'));
+      pageEls = Array.from(inner.querySelectorAll(".rpv-core__inner-page"));
+      if (pageEls.length === 0 && inner.querySelector(".rpv-core__inner-pages")) {
+        pageEls = Array.from(inner.querySelector(".rpv-core__inner-pages").children).filter((c) => c && c.offsetWidth > 0);
+      }
     }
     if (pageEls.length === 0) {
       const single = inner.querySelector('[data-rp="page-1"]') ||
@@ -165,18 +173,10 @@ export default function SigningPage() {
         inner.querySelector(".rpv-core__page-layer");
       if (single) {
         const pageRect = single.getBoundingClientRect();
-        setPage1Rect({
-          left: pageRect.left - innerRect.left,
-          top: pageRect.top - innerRect.top,
-          width: pageRect.width,
-          height: pageRect.height,
-        });
-        setPageRects([{
-          left: pageRect.left - innerRect.left,
-          top: pageRect.top - innerRect.top,
-          width: pageRect.width,
-          height: pageRect.height,
-        }]);
+        const left = pageRect.left - innerRect.left;
+        const top = pageRect.top - innerRect.top;
+        setPage1Rect({ left, top, width: pageRect.width, height: pageRect.height });
+        setPageRects([{ left, top, width: pageRect.width, height: pageRect.height }]);
       }
       return;
     }
@@ -193,16 +193,41 @@ export default function SigningPage() {
     setPageRects(rects);
   }, []);
 
+  // Re-measure when PDF viewer adds page elements (avoids "fields sometimes not showing" when PDF loads late)
+  useEffect(() => {
+    if (!showDoc || !fileUrl) return;
+    const inner = pdfInnerRef.current;
+    if (!inner) return;
+    const checkAndMeasure = () => {
+      const hasPages =
+        inner.querySelector(".rpv-core__inner-page") ||
+        inner.querySelector(".rpv-core__inner-pages") ||
+        inner.querySelector('[data-rp^="page-"]') ||
+        inner.querySelector(".rpv-core__page-layer");
+      if (hasPages) measurePages();
+    };
+    const observer = new MutationObserver(() => {
+      checkAndMeasure();
+    });
+    observer.observe(inner, { childList: true, subtree: true });
+    checkAndMeasure();
+    return () => observer.disconnect();
+  }, [showDoc, fileUrl, measurePages]);
+
   useEffect(() => {
     if (!showDoc) return;
     measurePages();
     const t1 = setTimeout(measurePages, 300);
     const t2 = setTimeout(measurePages, 1000);
     const t3 = setTimeout(measurePages, 2500);
+    const t4 = setTimeout(measurePages, 5000);
+    const t5 = setTimeout(measurePages, 7500);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
       clearTimeout(t3);
+      clearTimeout(t4);
+      clearTimeout(t5);
     };
   }, [showDoc, fileUrl, contentSize.width, contentSize.height, zoom, measurePages]);
 
@@ -285,24 +310,16 @@ export default function SigningPage() {
     if (!info?.signRequest?.signatureFields?.length) return;
     const fields = info.signRequest.signatureFields;
     const fieldValues = info.signRequest.fieldValues || {};
-    const scale = zoom / 100;
-    const hasSize = contentSize.width > 0 && contentSize.height > 0;
-    const page1Rect = contentSize.width && contentSize.height && pageRects.length > 0 ? pageRects[0] : null;
-    const scaleFactor = scale;
-    const renderW = info.document?.page1RenderWidth > 0 ? info.document.page1RenderWidth : (page1Rect ? page1Rect.width / scaleFactor : contentSize.width);
-    const page1LayoutWidth = page1Rect ? page1Rect.width / scaleFactor : contentSize.width;
-    const scaleOverlayX = renderW > 0 ? (page1Rect ? page1LayoutWidth / renderW : (hasSize ? contentSize.width / renderW : 1)) : 1;
     const next = {};
     for (const f of fields) {
       const t = (f.type || "signature").toLowerCase();
       if (!TEXT_FIELD_TYPES_FOR_MEASURE.includes(t)) continue;
       let value = localFieldOverrides[f.id] ?? savedFieldValues[f.id] ?? fieldValues[f.id] ?? "";
       if (!value && t === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
-      const str = typeof value === "string" ? value : String(value);
       const el = textMeasureRefs.current[f.id];
       if (el) {
         const measured = el.getBoundingClientRect().width;
-        const blockWidth = (f.width ?? 110) * scaleOverlayX;
+        const blockWidth = f.width ?? 110;
         next[f.id] = Math.max(blockWidth, measured + 16);
       }
     }
@@ -345,8 +362,10 @@ export default function SigningPage() {
 
   const { document: doc, signRequest } = info;
   const isSigned = signRequest.status === "signed";
-  const fields = signRequest.signatureFields?.length
-    ? signRequest.signatureFields
+  // Normalize to array so fields always show (avoids "sometimes not" when API returns null/undefined or empty)
+  const rawFields = Array.isArray(signRequest.signatureFields) ? signRequest.signatureFields : [];
+  const fields = rawFields.length > 0
+    ? rawFields
     : [{ id: "default", page: 1, x: 100, y: 400, width: 180, height: 36, type: "signature" }];
   const signatureData = signRequest.signatureData;
   const fieldSignatureData = signRequest.fieldSignatureData || {};
@@ -413,14 +432,7 @@ export default function SigningPage() {
   const usePageRectsForScroll = pageRects.length > 0 && totalDocHeight > 0 && totalDocWidth > 0;
 
   const scaleFactor = scale;
-  const renderW = doc.page1RenderWidth > 0 ? doc.page1RenderWidth : (page1Rect ? page1Rect.width / scaleFactor : contentSize.width);
-  const renderH = doc.page1RenderHeight > 0 ? doc.page1RenderHeight : (page1Rect ? page1Rect.height / scaleFactor : contentSize.height);
-  const page1LayoutWidth = page1Rect ? page1Rect.width / scaleFactor : contentSize.width;
-  const page1LayoutHeight = page1Rect ? page1Rect.height / scaleFactor : contentSize.height;
-  const scaleOverlayX = renderW > 0 ? (page1Rect ? page1LayoutWidth / renderW : (hasSize ? contentSize.width / renderW : 1)) : 1;
-  const scaleOverlayY = renderH > 0 ? (page1Rect ? page1LayoutHeight / renderH : (hasSize ? contentSize.height / renderH : 1)) : 1;
-  const offsetOverlayX = page1Rect ? page1Rect.left / scaleFactor : 0;
-  const offsetOverlayY = page1Rect ? page1Rect.top / scaleFactor : 0;
+  const hasPageMeasure = pageRects.length > 0 || page1Rect != null;
 
   return (
     <div className="signing-shell review-complete">
@@ -473,92 +485,35 @@ export default function SigningPage() {
 
       <div className="signing-review-body">
         <main className="signing-review-main">
-          <div ref={containerRef} className="signing-doc-canvas">
+          {/* Use same structure/CSS as DocumentDetailPage so coordinates match exactly */}
+          <div ref={containerRef} className="signing-doc-canvas signing-doc-canvas-prepare-style">
+            <div className="prepare-pdf-zoom-wrap">
               <div
-                className="signing-pdf-wrap"
+                ref={pdfInnerRef}
+                className="prepare-pdf-inner"
                 style={{
-                  ...(usePageRectsForScroll
-                    ? {
-                        width: Math.max(totalDocWidth, hasSize ? contentSize.width : 0),
-                        minWidth: hasSize ? `max(100%, ${wrapWidth}px)` : "100%",
-                        height: totalDocHeight,
-                        minHeight: totalDocHeight,
-                      }
-                    : innerLayoutSize.width > 0 && innerLayoutSize.height > 0
-                      ? {
-                          width: Math.max(innerLayoutSize.width * scale, hasSize ? contentSize.width : 0),
-                          minWidth: hasSize ? `max(100%, ${wrapWidth}px)` : "100%",
-                          height: innerLayoutSize.height * scale,
-                          minHeight: innerLayoutSize.height * scale,
-                        }
-                      : {
-                          minWidth: hasSize ? `max(100%, ${wrapWidth}px)` : "100%",
-                          minHeight: "100%",
-                        }),
+                  transform: `scale(${scale})`,
+                  transformOrigin: "0 0",
                 }}
               >
-                <div
-                  ref={pdfInnerRef}
-                  className="signing-pdf-inner"
-                  style={{
-                    transform: `scale(${scale})`,
-                    transformOrigin: "top center",
-                    ...(doc?.page1RenderWidth > 0 ? { width: doc.page1RenderWidth, maxWidth: doc.page1RenderWidth } : {}),
-                  }}
-                >
+                <div className="prepare-pdf-wrap">
                   {fileUrl ? (
-                    <PdfViewer
+                    <PdfMainView
                       key={isSigned ? `signed-${doc?.id}-${fileUrl}` : `draft-${fileUrl}`}
                       fileUrl={fileUrl}
-                      fullWidth
-                    />
-                  ) : fileUrlError ? (
-                    <div className="signing-pdf-error">
-                      <p className="signing-pdf-error-text">{fileUrlError}</p>
-                      <button type="button" className="signing-pdf-error-retry" onClick={fetchFileUrl}>
-                        Retry
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="signing-loading" role="status" aria-live="polite">Loading PDF…</div>
-                  )}
-                  {/* Placeholder overlay until Complete (then PDF has the signature, no overlay) */}
-                  {!isSigned && (
-                  <div
-                    className="signing-fields-overlay"
-                    style={{
-                      position: "absolute",
-                      left: 0,
-                      top: 0,
-                      right: 0,
-                      bottom: 0,
-                      width: "100%",
-                      height: "100%",
-                      minHeight: 400,
-                      zIndex: 100,
-                      pointerEvents: "none",
-                    }}
-                  >
-                    {fields.map((f) => {
-                      const typeLower = (f.type || "signature").toLowerCase();
-                      const isSig = typeLower === "signature" || typeLower === "initial";
-                      const isTextField = TEXT_FIELD_TYPES.includes(typeLower);
-                      const pageNum = Math.max(1, f.page || 1);
-                      const fieldPageRect = pageRects.length >= pageNum ? pageRects[pageNum - 1] : page1Rect;
-                      const fieldOffsetX = fieldPageRect ? fieldPageRect.left / scaleFactor : offsetOverlayX;
-                      const fieldOffsetY = fieldPageRect ? fieldPageRect.top / scaleFactor : offsetOverlayY;
-                      // Backend stores x,y (page-relative); support pageX/pageY fallback. Ensure valid numbers so fields always render.
-                      const posX = Number(f.x ?? f.pageX ?? 0) || 0;
-                      const posY = Number(f.y ?? f.pageY ?? 0) || 0;
-                      const leftRaw = fieldOffsetX + posX * scaleOverlayX;
-                      const topRaw = fieldOffsetY + posY * scaleOverlayY;
-                      const left = Number.isFinite(leftRaw) ? leftRaw : (fieldOffsetX || 0);
-                      const top = Number.isFinite(topRaw) ? topRaw : (fieldOffsetY || 0);
-                      /* Match DocumentDetailPage: 110x55 for Signature/Initial, 110x45 for others */
-                      const defW = 110;
-                      const defH = (typeLower === "signature" || typeLower === "initial") ? 55 : 45;
-                      const blockHeight = (f.height ?? defH) * scaleOverlayY;
-                      const blockWidth = (f.width ?? defW) * scaleOverlayX;
+                      renderPageOverlay={!isSigned ? (pageNum) => {
+                        const pageFields = fields.filter((f) => (f.page ?? 1) === pageNum);
+                        return pageFields.map((f) => {
+                          const typeLower = (f.type || "signature").toLowerCase();
+                          const isSig = typeLower === "signature" || typeLower === "initial";
+                          const isTextField = TEXT_FIELD_TYPES.includes(typeLower);
+                          /* Percent-based coords (recommended) - survives zoom, mobile, resizing */
+                          const rw = doc?.page1RenderWidth ?? 612;
+                          const rh = doc?.page1RenderHeight ?? 792;
+                          const xPct = f.xPct != null ? f.xPct : ((Number(f.x ?? f.pageX ?? 0) / rw) * 100);
+                          const yPct = f.yPct != null ? f.yPct : ((Number(f.y ?? f.pageY ?? 0) / rh) * 100);
+                          const wPct = f.wPct != null ? f.wPct : ((Number(f.width ?? 110) / rw) * 100);
+                          const hPct = f.hPct != null ? f.hPct : ((Number(f.height ?? 55) / rh) * 100);
 
                       if (isTextField) {
                         const fieldKey = getFieldKey(f);
@@ -566,17 +521,18 @@ export default function SigningPage() {
                         const rawValue = localFieldOverrides[fieldKey] ?? savedFieldValues[fieldKey] ?? fieldValues[f.id] ?? fieldValues[fieldKey];
                         const value = rawValue ?? (typeLower === "text" && (f.addText ?? "").trim() ? f.addText.trim() : "");
                         const label = typeLower === "date" ? "Date signed" : typeLower.charAt(0).toUpperCase() + typeLower.slice(1);
-                        const effectiveWidth = textFieldWidths[f.id] ?? blockWidth;
+                        const effectiveW = (textFieldWidths[f.id] && rw > 0) ? `${Math.max(wPct, (textFieldWidths[f.id] / rw) * 100)}%` : `${wPct}%`;
                         const textFormatStyle = getTextFieldFormatStyle(f);
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
                             className={`signing-field-block signing-field-text-block ${isReadOnly ? "signing-field-readonly" : ""}`}
                             style={{
-                              left,
-                              top,
-                              width: effectiveWidth,
-                              height: blockHeight,
+                              position: "absolute",
+                              left: `${xPct}%`,
+                              top: `${yPct}%`,
+                              width: effectiveW,
+                              height: `${hPct}%`,
                             }}
                           >
                             <span
@@ -620,10 +576,11 @@ export default function SigningPage() {
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
                             className="signing-field-block signing-field-dropdown-block"
                             style={{
-                              left,
-                              top,
-                              width: blockWidth,
-                              height: blockHeight,
+                              position: "absolute",
+                              left: `${xPct}%`,
+                              top: `${yPct}%`,
+                              width: `${wPct}%`,
+                              height: `${hPct}%`,
                             }}
                           >
                             <select
@@ -654,17 +611,16 @@ export default function SigningPage() {
                       const isInitialField = typeLower === "initial";
                       const hasSigned = !!(fieldSignatureData[f.id] ?? (signatureData && Object.keys(fieldSignatureData).length === 0 ? signatureData : null));
                       const fieldSignature = fieldSignatureData[f.id] || (Object.keys(fieldSignatureData).length === 0 ? signatureData : null);
-                      const sigBlockHeight = (f.height ?? 55) * scaleOverlayY;
-                      const sigBlockWidth = (f.width ?? 110) * scaleOverlayX;
                       return (
                         <div
                           key={f.id || `${f.page}-${f.x}-${f.y}`}
                           className={`signing-field-block ${hasSigned ? "signed" : "unsigned"}`}
                           style={{
-                            left,
-                            top,
-                            width: sigBlockWidth,
-                            height: sigBlockHeight,
+                            position: "absolute",
+                            left: `${xPct}%`,
+                            top: `${yPct}%`,
+                            width: `${wPct}%`,
+                            height: `${hPct}%`,
                           }}
                         >
                           {hasSigned ? (
@@ -700,12 +656,24 @@ export default function SigningPage() {
                           )}
                         </div>
                       );
-                    })}
-                  </div>
+                        });
+                      } : undefined}
+                    />
+                  ) : fileUrlError ? null : (
+                    <div className="signing-loading" role="status" aria-live="polite">Loading PDF…</div>
                   )}
                 </div>
+                {fileUrlError && (
+                  <div className="signing-pdf-error" style={{ position: "absolute", left: 0, right: 0, top: "50%", transform: "translateY(-50%)" }}>
+                    <p className="signing-pdf-error-text">{fileUrlError}</p>
+                    <button type="button" className="signing-pdf-error-retry" onClick={fetchFileUrl}>
+                      Retry
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
+          </div>
         </main>
 
         <aside className="signing-review-sidebar">

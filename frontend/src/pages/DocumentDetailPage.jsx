@@ -323,6 +323,10 @@ export default function DocumentDetailPage() {
             options: Array.isArray(f.options) ? f.options : [],
             defaultOption: f.defaultOption ?? "",
             page: f.page ?? 1,
+            xPct: f.xPct,
+            yPct: f.yPct,
+            wPct: f.wPct,
+            hPct: f.hPct,
             pageX: f.x,
             pageY: f.y,
           }))
@@ -404,17 +408,17 @@ export default function DocumentDetailPage() {
   const addField = useCallback((type, position) => {
     const recipientId = selectedRecipientId || signers[0]?._id;
     const defaultPage = 1;
-    const defaultPageX = 50;
-    const defaultPageY = 80 + placedFields.length * 42;
+    const defWPct = 14;
+    const defHPct = 6;
     const base = {
       id: generateFieldId(),
       type,
       signRequestId: recipientId,
       page: position?.page ?? defaultPage,
-      pageX: position?.pageX ?? defaultPageX,
-      pageY: position?.pageY ?? defaultPageY,
-      width: type === "Signature" || type === "Initial" ? 110 : 110,
-      height: type === "Signature" || type === "Initial" ? 55 : 45,
+      xPct: position?.xPct ?? 8,
+      yPct: position?.yPct ?? 10,
+      wPct: position?.wPct ?? defWPct,
+      hPct: position?.hPct ?? defHPct,
       required: true,
       scale: 100,
       dataLabel: `${type} ${generateFieldId().slice(0, 8)}`,
@@ -484,27 +488,25 @@ export default function DocumentDetailPage() {
     return false;
   }, [getFieldOverlayPosition]);
 
-  /** Convert client coords to overlay-relative coords and resolve page number */
-  const clientToOverlayCoords = useCallback((clientX, clientY) => {
-    const overlay = overlayRef.current;
-    if (!overlay) return null;
-    const overlayRect = overlay.getBoundingClientRect();
-    const scale = zoom / 100;
-    const x = (clientX - overlayRect.left) / scale;
-    const y = (clientY - overlayRect.top) / scale;
-    const measurement = getPagePlacementMeasurement();
-    let page = 1;
-    if (measurement?.pages?.length) {
-      for (const p of measurement.pages) {
-        if (x >= p.offsetX && x <= p.offsetX + p.pageRenderWidth &&
-            y >= p.offsetY && y <= p.offsetY + (p.pageRenderHeight ?? p.pageRenderWidth)) {
-          page = p.pageNum;
-          break;
-        }
+  /** Convert client click to percent coords relative to page wrapper (recommended approach). */
+  const clientToPercentCoords = useCallback((clientX, clientY) => {
+    const canvas = docCanvasRef.current;
+    if (!canvas) return null;
+    const pageEls = Array.from(canvas.querySelectorAll('[data-rp^="page-"]'));
+    for (const pageWrapper of pageEls) {
+      const rect = pageWrapper.getBoundingClientRect();
+      if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+        const xPx = clientX - rect.left;
+        const yPx = clientY - rect.top;
+        const xPct = (xPx / rect.width) * 100;
+        const yPct = (yPx / rect.height) * 100;
+        const match = pageWrapper.getAttribute?.("data-rp")?.match(/page-(\d+)/);
+        const page = match ? parseInt(match[1], 10) : 1;
+        return { xPct, yPct, page };
       }
     }
-    return { x, y, page };
-  }, [zoom, getPagePlacementMeasurement]);
+    return null;
+  }, []);
 
   /** Convert overlay coords to page-relative (page, pageX, pageY) so position survives layout changes */
   const overlayToPageRelative = useCallback((overlayX, overlayY) => {
@@ -530,17 +532,9 @@ export default function DocumentDetailPage() {
       return;
     }
     const handlePointerMove = (e) => {
-      const overlay = overlayRef.current;
-      if (!overlay) return;
-      const rect = overlay.getBoundingClientRect();
-      const inBounds = e.clientX >= rect.left && e.clientX <= rect.right &&
-        e.clientY >= rect.top && e.clientY <= rect.bottom;
-      if (inBounds) {
-        const scale = zoom / 100;
-        setCursorOverlayPos({
-          x: (e.clientX - rect.left) / scale,
-          y: (e.clientY - rect.top) / scale,
-        });
+      const coords = clientToPercentCoords(e.clientX, e.clientY);
+      if (coords) {
+        setCursorOverlayPos({ xPct: coords.xPct, yPct: coords.yPct, page: coords.page });
       } else {
         setCursorOverlayPos(null);
       }
@@ -554,32 +548,29 @@ export default function DocumentDetailPage() {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [pendingFieldType, zoom]);
+  }, [pendingFieldType, clientToPercentCoords]);
 
-  const pendingFieldWidth = (pendingFieldType === "Signature" || pendingFieldType === "Initial") ? 110 : 110;
-  const pendingFieldHeight = (pendingFieldType === "Signature" || pendingFieldType === "Initial") ? 55 : 45;
+  const pendingWPct = (pendingFieldType === "Signature" || pendingFieldType === "Initial") ? 14 : 14;
+  const pendingHPct = (pendingFieldType === "Signature" || pendingFieldType === "Initial") ? 6 : 5;
 
-  /** DocuSign-style: place field on document click when one is carried by cursor (center at click) */
+  /** DocuSign-style: place field on document click when one is carried by cursor (center at click). Uses percent coords. */
   const handleDocumentPlaceClick = useCallback((e) => {
     if (!pendingFieldType || e.button !== 0) return;
     if (e.target.closest?.(".prepare-placed-field")) return;
-    const coords = clientToOverlayCoords(e.clientX, e.clientY);
+    const coords = clientToPercentCoords(e.clientX, e.clientY);
     if (!coords) return;
-    const w = pendingFieldWidth;
-    const h = pendingFieldHeight;
-    const centerX = coords.x;
-    const centerY = coords.y;
     e.preventDefault();
     e.stopPropagation();
-    const { page, pageX, pageY } = overlayToPageRelative(centerX - w / 2, centerY - h / 2);
     addField(pendingFieldType, {
-      page,
-      pageX,
-      pageY,
+      page: coords.page,
+      xPct: Math.max(0, coords.xPct - pendingWPct / 2),
+      yPct: Math.max(0, coords.yPct - pendingHPct / 2),
+      wPct: pendingWPct,
+      hPct: pendingHPct,
     });
     setPendingFieldType(null);
     setCursorOverlayPos(null);
-  }, [pendingFieldType, addField, clientToOverlayCoords, overlayToPageRelative, pendingFieldWidth, pendingFieldHeight]);
+  }, [pendingFieldType, addField, clientToPercentCoords, pendingWPct, pendingHPct]);
 
   const handleFieldPointerDown = useCallback((e, field) => {
     if (e.button !== 0) return;
@@ -590,43 +581,47 @@ export default function DocumentDetailPage() {
     dragTargetRef.current = target;
     setSelectedFieldId(field.id);
     setDraggingFieldId(field.id);
-    const measurement = getPagePlacementMeasurement();
-    const pos = getFieldOverlayPosition(field, measurement);
+    const coords = clientToPercentCoords(e.clientX, e.clientY);
     dragStartRef.current = {
-      fieldX: pos.x,
-      fieldY: pos.y,
-      fieldW: field.width,
-      fieldH: field.height,
+      fieldXPct: field.xPct ?? 8,
+      fieldYPct: field.yPct ?? 10,
+      fieldWPct: field.wPct ?? 14,
+      fieldHPct: field.hPct ?? 6,
       clientX: e.clientX,
       clientY: e.clientY,
+      startXPct: coords?.xPct ?? field.xPct ?? 8,
+      startYPct: coords?.yPct ?? field.yPct ?? 10,
     };
-  }, [getPagePlacementMeasurement, getFieldOverlayPosition]);
+  }, [clientToPercentCoords]);
 
   useEffect(() => {
     if (!draggingFieldId) return;
     const handlePointerMove = (e) => {
-      const { fieldX, fieldY, fieldW, fieldH, clientX, clientY } = dragStartRef.current;
-      const scale = zoom / 100;
-      const dx = (e.clientX - clientX) / scale;
-      const dy = (e.clientY - clientY) / scale;
-      const newX = Math.max(0, fieldX + dx);
-      const newY = Math.max(0, fieldY + dy);
-      updateField(draggingFieldId, { x: newX, y: newY });
+      const { fieldXPct, fieldYPct, fieldWPct, fieldHPct, startXPct, startYPct } = dragStartRef.current;
+      const coords = clientToPercentCoords(e.clientX, e.clientY);
+      if (!coords) return;
+      const dxPct = coords.xPct - startXPct;
+      const dyPct = coords.yPct - startYPct;
+      const newXPct = Math.max(0, Math.min(100 - fieldWPct, fieldXPct + dxPct));
+      const newYPct = Math.max(0, Math.min(100 - fieldHPct, fieldYPct + dyPct));
+      updateField(draggingFieldId, { xPct: newXPct, yPct: newYPct });
       dragStartRef.current = {
-        fieldX: newX,
-        fieldY: newY,
-        fieldW: fieldW ?? 110,
-        fieldH: fieldH ?? 55,
+        fieldXPct: newXPct,
+        fieldYPct: newYPct,
+        fieldWPct,
+        fieldHPct,
         clientX: e.clientX,
         clientY: e.clientY,
+        startXPct: coords.xPct,
+        startYPct: coords.yPct,
       };
     };
     const handlePointerUp = (e) => {
       const target = dragTargetRef.current;
-      const { fieldX, fieldY } = dragStartRef.current;
-      const { page, pageX, pageY } = overlayToPageRelative(fieldX, fieldY);
-      // Always snap the field back to page-relative coordinates; do not auto-delete on drag
-      updateField(draggingFieldId, { page, pageX, pageY, x: undefined, y: undefined });
+      const { fieldXPct, fieldYPct } = dragStartRef.current;
+      const coords = clientToPercentCoords(e.clientX, e.clientY);
+      const page = coords?.page ?? 1;
+      updateField(draggingFieldId, { page, xPct: fieldXPct, yPct: fieldYPct });
       if (target?.releasePointerCapture && e.pointerId !== undefined) {
         try {
           target.releasePointerCapture(e.pointerId);
@@ -643,63 +638,60 @@ export default function DocumentDetailPage() {
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointerleave", handlePointerUp);
     };
-  }, [draggingFieldId, updateField, zoom, overlayToPageRelative]);
+  }, [draggingFieldId, updateField, clientToPercentCoords]);
+
+  const minWPct = 3;
+  const maxWPct = 55;
+  const minHPct = 2;
+  const maxHPct = 18;
 
   const handleResizePointerDown = useCallback((e, field, handle) => {
     e.preventDefault();
     e.stopPropagation();
     setResizingFieldId(field.id);
     setResizeHandle(handle);
-    const measurement = getPagePlacementMeasurement();
-    const pos = getFieldOverlayPosition(field, measurement);
     resizeStartRef.current = {
-      x: pos.x,
-      y: pos.y,
-      w: field.width,
-      h: field.height,
+      xPct: field.xPct ?? 8,
+      yPct: field.yPct ?? 10,
+      wPct: field.wPct ?? 14,
+      hPct: field.hPct ?? 6,
+      page: field.page ?? 1,
       clientX: e.clientX,
       clientY: e.clientY,
     };
-  }, [getPagePlacementMeasurement, getFieldOverlayPosition]);
+  }, []);
 
   useEffect(() => {
     if (!resizingFieldId || !resizeHandle) return;
-    const { minW, maxW, minH, maxH } = FIELD_SIZE_LIMITS;
     const handlePointerMove = (e) => {
-      const { x, y, w, h, clientX, clientY } = resizeStartRef.current;
-      const scale = zoom / 100;
-      const dx = (e.clientX - clientX) / scale;
-      const dy = (e.clientY - clientY) / scale;
-      let newX = x, newY = y, newW = w, newH = h;
+      const canvas = docCanvasRef.current;
+      if (!canvas) return;
+      const pageWrapper = canvas.querySelector(`[data-rp="page-${resizeStartRef.current.page}"]`);
+      if (!pageWrapper) return;
+      const rect = pageWrapper.getBoundingClientRect();
+      const dxPct = ((e.clientX - resizeStartRef.current.clientX) / rect.width) * 100;
+      const dyPct = ((e.clientY - resizeStartRef.current.clientY) / rect.height) * 100;
+      let { xPct, yPct, wPct, hPct } = resizeStartRef.current;
       if (resizeHandle.includes("e")) {
-        newW = Math.min(maxW, Math.max(minW, w + dx));
+        wPct = Math.min(maxWPct, Math.max(minWPct, wPct + dxPct));
       }
       if (resizeHandle.includes("w")) {
-        const dw = Math.min(dx, w - minW);
-        newW = w - dw;
-        newX = x + dw;
+        const dw = Math.min(dxPct, wPct - minWPct);
+        wPct = wPct - dw;
+        xPct = xPct + dw;
       }
       if (resizeHandle.includes("s")) {
-        newH = Math.min(maxH, Math.max(minH, h + dy));
+        hPct = Math.min(maxHPct, Math.max(minHPct, hPct + dyPct));
       }
       if (resizeHandle.includes("n")) {
-        const dh = Math.min(dy, h - minH);
-        newH = h - dh;
-        newY = y + dh;
+        const dh = Math.min(dyPct, hPct - minHPct);
+        hPct = hPct - dh;
+        yPct = yPct + dh;
       }
-      updateField(resizingFieldId, { x: newX, y: newY, width: newW, height: newH });
-      resizeStartRef.current = { x: newX, y: newY, w: newW, h: newH, clientX: e.clientX, clientY: e.clientY };
+      updateField(resizingFieldId, { xPct, yPct, wPct, hPct });
+      resizeStartRef.current = { ...resizeStartRef.current, xPct, yPct, wPct, hPct, clientX: e.clientX, clientY: e.clientY };
     };
     const handlePointerUp = () => {
-      const fid = resizingFieldId;
-      const { x, y, w, h } = resizeStartRef.current;
-      const measurement = getPagePlacementMeasurement();
-      if (measurement?.pages?.length && !isFieldInDocumentArea({ x, y, width: w, height: h }, measurement)) {
-        removeField(fid);
-      } else {
-        const { page, pageX, pageY } = overlayToPageRelative(x, y);
-        updateField(fid, { page, pageX, pageY, x: undefined, y: undefined });
-      }
       setResizingFieldId(null);
       setResizeHandle(null);
     };
@@ -709,7 +701,7 @@ export default function DocumentDetailPage() {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [resizingFieldId, resizeHandle, updateField, removeField, zoom, getPagePlacementMeasurement, isFieldInDocumentArea, overlayToPageRelative]);
+  }, [resizingFieldId, resizeHandle, updateField]);
 
   const handleAddSigner = async (e) => {
     e.preventDefault();
@@ -783,19 +775,16 @@ export default function DocumentDetailPage() {
     }
   }, [id, pageToDelete, pdfPageCount]);
 
-  const mapFieldToPayload = useCallback((f, getPageOffset) => {
-    const { offsetX, offsetY } = getPageOffset(f.page);
-    const pageX = f.pageX != null ? f.pageX : Math.max(0, (f.x ?? 0) - offsetX);
-    const pageY = f.pageY != null ? f.pageY : Math.max(0, (f.y ?? 0) - offsetY);
+  const mapFieldToPayload = useCallback((f) => {
     const base = {
       id: f.id,
       signRequestId: f.signRequestId,
       type: fieldTypeToBackend(f.type),
       page: f.page ?? 1,
-      x: pageX,
-      y: pageY,
-      width: f.width,
-      height: f.height,
+      xPct: f.xPct ?? 8,
+      yPct: f.yPct ?? 10,
+      wPct: f.wPct ?? 14,
+      hPct: f.hPct ?? 6,
       required: f.required,
       dataLabel: f.dataLabel,
       tooltip: f.tooltip,
@@ -827,18 +816,8 @@ export default function DocumentDetailPage() {
   const saveSigningFields = useCallback(async () => {
     setSavingFields(true);
     try {
-      const measurement = getPagePlacementMeasurement();
-      const page1RenderWidth = measurement?.pageRenderWidth ?? 800;
-      const page1RenderHeight = measurement?.pageRenderHeight ?? undefined;
-      const pages = measurement?.pages ?? [];
-      const getPageOffset = (pageNum) => {
-        const p = pages.find((pg) => pg.pageNum === (pageNum || 1));
-        return p ? { offsetX: p.offsetX, offsetY: p.offsetY } : { offsetX: measurement?.offsetX ?? 0, offsetY: measurement?.offsetY ?? 0 };
-      };
       await apiClient.put(`/documents/${id}/signing-fields`, {
-        fields: placedFields.map((f) => mapFieldToPayload(f, getPageOffset)),
-        page1RenderWidth: page1RenderWidth > 0 ? Math.round(page1RenderWidth) : undefined,
-        page1RenderHeight: page1RenderHeight > 0 ? Math.round(page1RenderHeight) : undefined,
+        fields: placedFields.map(mapFieldToPayload),
       });
     } catch (err) {
       console.error(err);
@@ -846,7 +825,7 @@ export default function DocumentDetailPage() {
     } finally {
       setSavingFields(false);
     }
-  }, [id, placedFields, getPagePlacementMeasurement, mapFieldToPayload]);
+  }, [id, placedFields, mapFieldToPayload]);
 
   const isSigningField = (type) =>
     type === "Signature" || type === "Initial";
@@ -872,18 +851,8 @@ export default function DocumentDetailPage() {
     setSendSuccess(null);
     setSending(true);
     try {
-      const measurement = getPagePlacementMeasurement();
-      const page1RenderWidth = measurement?.pageRenderWidth ?? 800;
-      const page1RenderHeight = measurement?.pageRenderHeight ?? undefined;
-      const pages = measurement?.pages ?? [];
-      const getPageOffset = (pageNum) => {
-        const p = pages.find((pg) => pg.pageNum === (pageNum || 1));
-        return p ? { offsetX: p.offsetX, offsetY: p.offsetY } : { offsetX: measurement?.offsetX ?? 0, offsetY: measurement?.offsetY ?? 0 };
-      };
       await apiClient.put(`/documents/${id}/signing-fields`, {
-        fields: placedFields.map((f) => mapFieldToPayload(f, getPageOffset)),
-        page1RenderWidth: page1RenderWidth > 0 ? Math.round(page1RenderWidth) : undefined,
-        page1RenderHeight: page1RenderHeight > 0 ? Math.round(page1RenderHeight) : undefined,
+        fields: placedFields.map(mapFieldToPayload),
       });
       const res = await apiClient.post(`/documents/${id}/send`);
       setSendSuccess(res.data.sentCount ?? 0);
@@ -1463,86 +1432,95 @@ export default function DocumentDetailPage() {
                         pageRotations={pageRotations}
                         currentPage={currentPage}
                         onPageCount={setPdfPageCount}
+                        renderPageOverlay={(pageNum) => {
+                          const pageFields = placedFields.filter((f) => (f.page ?? 1) === pageNum);
+                          const showGhost = pendingFieldType && cursorOverlayPos?.page === pageNum;
+                          return (
+                            <>
+                              {showGhost && (
+                                <div
+                                  className="prepare-field-ghost"
+                                  style={{
+                                    position: "absolute",
+                                    left: `${Math.max(0, cursorOverlayPos.xPct - pendingWPct / 2)}%`,
+                                    top: `${Math.max(0, cursorOverlayPos.yPct - pendingHPct / 2)}%`,
+                                    width: `${pendingWPct}%`,
+                                    height: `${pendingHPct}%`,
+                                    pointerEvents: "none",
+                                  }}
+                                  aria-hidden
+                                >
+                                  <span className="prepare-placed-field-icon">{FIELD_ICONS[pendingFieldType] || "•"}</span>
+                                  <span className="prepare-placed-field-label">
+                                    {pendingFieldType === "Signature" ? "Sign" : pendingFieldType}
+                                  </span>
+                                </div>
+                              )}
+                              {pageFields.map((f) => {
+                                const color = getRecipientColor(f.signRequestId, signers);
+                                const isSignatureType = f.type === "Signature" || f.type === "Initial";
+                                const isSelected = selectedFieldId === f.id;
+                                const showHandles = isSelected && isSignatureType;
+                                const xPct = f.xPct != null ? f.xPct : 8;
+                                const yPct = f.yPct != null ? f.yPct : 10;
+                                const wPct = f.wPct != null ? f.wPct : 14;
+                                const hPct = f.hPct != null ? f.hPct : 6;
+                                return (
+                                  <div
+                                    key={f.id}
+                                    ref={f.page === 1 ? overlayRef : undefined}
+                                    role="button"
+                                    tabIndex={0}
+                                    className={`prepare-placed-field ${isSignatureType ? "prepare-placed-field-sign" : ""} ${isSelected ? "selected" : ""} ${draggingFieldId === f.id ? "dragging" : ""} ${resizingFieldId === f.id ? "resizing" : ""}`}
+                                    style={{
+                                      position: "absolute",
+                                      left: `${xPct}%`,
+                                      top: `${yPct}%`,
+                                      width: `${wPct}%`,
+                                      height: `${hPct}%`,
+                                      borderColor: color.border,
+                                      backgroundColor: color.bg,
+                                    }}
+                                    onPointerDown={(e) => handleFieldPointerDown(e, f)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" || e.key === " ") {
+                                        e.preventDefault();
+                                        setSelectedFieldId(f.id);
+                                      }
+                                    }}
+                                  >
+                                    <span className="prepare-placed-field-icon" aria-hidden>{FIELD_ICONS[f.type] || "•"}</span>
+                                    <span className="prepare-placed-field-label">
+                                      {f.type === "Signature" ? "Sign" : f.type}
+                                    </span>
+                                    {showHandles && (
+                                      <>
+                                        {["n", "s", "e", "w", "nw", "ne", "sw", "se"].map((h) => (
+                                          <div
+                                            key={h}
+                                            className={`prepare-resize-handle prepare-resize-handle-${h}`}
+                                            onPointerDown={(e) => handleResizePointerDown(e, f, h)}
+                                            aria-hidden
+                                          />
+                                        ))}
+                                      </>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                              {pendingFieldType && (
+                                <div
+                                  className="prepare-fields-dropzone"
+                                  style={{ position: "absolute", inset: 0, cursor: "crosshair", zIndex: 100 }}
+                                  onPointerDown={handleDocumentPlaceClick}
+                                  aria-label="Click to place field"
+                                />
+                              )}
+                            </>
+                          );
+                        }}
                       />
                     ) : null}
-                  </div>
-                  <div ref={overlayRef} className="prepare-fields-overlay">
-                {pendingFieldType && (
-                  <>
-                    <div
-                      className="prepare-fields-dropzone"
-                      style={{ pointerEvents: "auto" }}
-                      onPointerDown={handleDocumentPlaceClick}
-                      aria-label="Click to place field"
-                    />
-                    {cursorOverlayPos && (
-                      <div
-                        className="prepare-field-ghost"
-                        style={{
-                          left: cursorOverlayPos.x - pendingFieldWidth / 2,
-                          top: cursorOverlayPos.y - pendingFieldHeight / 2,
-                          width: pendingFieldWidth,
-                          height: pendingFieldHeight,
-                          pointerEvents: "none",
-                        }}
-                        aria-hidden
-                      >
-                        <span className="prepare-placed-field-icon">{FIELD_ICONS[pendingFieldType] || "•"}</span>
-                        <span className="prepare-placed-field-label">
-                          {pendingFieldType === "Signature" ? "Sign" : pendingFieldType}
-                        </span>
-                      </div>
-                    )}
-                  </>
-                )}
-                {placedFields.map((f) => {
-                  const measurement = getPagePlacementMeasurement();
-                  const pos = getFieldOverlayPosition(f, measurement);
-                  const color = getRecipientColor(f.signRequestId, signers);
-                  const isSignatureType = f.type === "Signature" || f.type === "Initial";
-                  const isSelected = selectedFieldId === f.id;
-                  const showHandles = isSelected && isSignatureType;
-                  return (
-                    <div
-                      key={f.id}
-                      role="button"
-                      tabIndex={0}
-                      className={`prepare-placed-field ${isSignatureType ? "prepare-placed-field-sign" : ""} ${isSelected ? "selected" : ""} ${draggingFieldId === f.id ? "dragging" : ""} ${resizingFieldId === f.id ? "resizing" : ""}`}
-                      style={{
-                        left: pos.x,
-                        top: pos.y,
-                        width: f.width,
-                        height: f.height,
-                        borderColor: color.border,
-                        backgroundColor: color.bg,
-                      }}
-                      onPointerDown={(e) => handleFieldPointerDown(e, f)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          setSelectedFieldId(f.id);
-                        }
-                      }}
-                    >
-                      <span className="prepare-placed-field-icon" aria-hidden>{FIELD_ICONS[f.type] || "•"}</span>
-                      <span className="prepare-placed-field-label">
-                        {f.type === "Signature" ? "Sign" : f.type}
-                      </span>
-                      {showHandles && (
-                        <>
-                          {["n", "s", "e", "w", "nw", "ne", "sw", "se"].map((h) => (
-                            <div
-                              key={h}
-                              className={`prepare-resize-handle prepare-resize-handle-${h}`}
-                              onPointerDown={(e) => handleResizePointerDown(e, f, h)}
-                              aria-hidden
-                            />
-                          ))}
-                        </>
-                      )}
-                    </div>
-                  );
-                })}
                   </div>
                 </div>
               </div>
@@ -1906,44 +1884,36 @@ export default function DocumentDetailPage() {
                     Location ▾
                   </button>
                   <div className="prepare-property-section-body">
-                    {(() => {
-                      const measurement = getPagePlacementMeasurement();
-                      const locationPos = getFieldOverlayPosition(selectedField, measurement);
-                      return (
-                        <>
-                          <label className="prepare-property-row">
-                            <span>Pixels from Left</span>
-                            <input
-                              type="number"
-                              min={0}
-                              value={Math.round(locationPos.x)}
-                              onChange={(e) => {
-                                const newX = Number(e.target.value) || 0;
-                                const m = getPagePlacementMeasurement();
-                                const pos = getFieldOverlayPosition(selectedField, m);
-                                const { page, pageX, pageY } = overlayToPageRelative(newX, pos.y);
-                                updateField(selectedField.id, { page, pageX, pageY, x: undefined, y: undefined });
-                              }}
-                            />
-                          </label>
-                          <label className="prepare-property-row">
-                            <span>Pixels from Top</span>
-                            <input
-                              type="number"
-                              min={0}
-                              value={Math.round(locationPos.y)}
-                              onChange={(e) => {
-                                const newY = Number(e.target.value) || 0;
-                                const m = getPagePlacementMeasurement();
-                                const pos = getFieldOverlayPosition(selectedField, m);
-                                const { page, pageX, pageY } = overlayToPageRelative(pos.x, newY);
-                                updateField(selectedField.id, { page, pageX, pageY, x: undefined, y: undefined });
-                              }}
-                            />
-                          </label>
-                        </>
-                      );
-                    })()}
+                    <>
+                      <label className="prepare-property-row">
+                        <span>% from Left</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={0.1}
+                          value={Number(selectedField.xPct ?? 8).toFixed(1)}
+                          onChange={(e) => {
+                            const v = Number(e.target.value) || 0;
+                            updateField(selectedField.id, { xPct: Math.max(0, Math.min(100, v)) });
+                          }}
+                        />
+                      </label>
+                      <label className="prepare-property-row">
+                        <span>% from Top</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={0.1}
+                          value={Number(selectedField.yPct ?? 10).toFixed(1)}
+                          onChange={(e) => {
+                            const v = Number(e.target.value) || 0;
+                            updateField(selectedField.id, { yPct: Math.max(0, Math.min(100, v)) });
+                          }}
+                        />
+                      </label>
+                    </>
                   </div>
                 </div>
                 <div className="prepare-property-actions">
@@ -2322,44 +2292,36 @@ export default function DocumentDetailPage() {
                     Location ▾
                   </button>
                   <div className="prepare-property-section-body">
-                    {(() => {
-                      const measurement = getPagePlacementMeasurement();
-                      const locationPos = getFieldOverlayPosition(selectedField, measurement);
-                      return (
-                        <>
-                          <label className="prepare-property-row">
-                            <span>Pixels from Left</span>
-                            <input
-                              type="number"
-                              min={0}
-                              value={Math.round(locationPos.x)}
-                              onChange={(e) => {
-                                const newX = Number(e.target.value) || 0;
-                                const m = getPagePlacementMeasurement();
-                                const pos = getFieldOverlayPosition(selectedField, m);
-                                const { page, pageX, pageY } = overlayToPageRelative(newX, pos.y);
-                                updateField(selectedField.id, { page, pageX, pageY, x: undefined, y: undefined });
-                              }}
-                            />
-                          </label>
-                          <label className="prepare-property-row">
-                            <span>Pixels from Top</span>
-                            <input
-                              type="number"
-                              min={0}
-                              value={Math.round(locationPos.y)}
-                              onChange={(e) => {
-                                const newY = Number(e.target.value) || 0;
-                                const m = getPagePlacementMeasurement();
-                                const pos = getFieldOverlayPosition(selectedField, m);
-                                const { page, pageX, pageY } = overlayToPageRelative(pos.x, newY);
-                                updateField(selectedField.id, { page, pageX, pageY, x: undefined, y: undefined });
-                              }}
-                            />
-                          </label>
-                        </>
-                      );
-                    })()}
+                    <>
+                      <label className="prepare-property-row">
+                        <span>% from Left</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={0.1}
+                          value={Number(selectedField.xPct ?? 8).toFixed(1)}
+                          onChange={(e) => {
+                            const v = Number(e.target.value) || 0;
+                            updateField(selectedField.id, { xPct: Math.max(0, Math.min(100, v)) });
+                          }}
+                        />
+                      </label>
+                      <label className="prepare-property-row">
+                        <span>% from Top</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={0.1}
+                          value={Number(selectedField.yPct ?? 10).toFixed(1)}
+                          onChange={(e) => {
+                            const v = Number(e.target.value) || 0;
+                            updateField(selectedField.id, { yPct: Math.max(0, Math.min(100, v)) });
+                          }}
+                        />
+                      </label>
+                    </>
                   </div>
                 </div>
                 <div className="prepare-property-actions">
