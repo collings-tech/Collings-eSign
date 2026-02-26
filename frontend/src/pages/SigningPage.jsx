@@ -109,7 +109,7 @@ export default function SigningPage() {
   }, [token]);
 
   // Fetch view URL for PDF when info is available. Refetch when info changes (e.g. after complete → signed PDF).
-  // Skip refetch when we already have a URL and only signature state changed (e.g. after Adopt and Sign) so the document doesn't reload.
+  // Skip refetch when we already have a URL (avoids infinite loop: backend returns cache-busting URLs, so refetch would always produce new URL → effect rerun → refetch again).
   useEffect(() => {
     if (!info) {
       setFileUrl(null);
@@ -121,9 +121,9 @@ export default function SigningPage() {
       }
       return;
     }
-    const isSigned = info?.signRequest?.status === "signed";
-    if (fileUrl && !isSigned) {
-      return; // Keep existing PDF; only refresh URL when we don't have one or when envelope is signed (need signed PDF)
+    // When we already have a URL, don't refetch. We only need to fetch when we don't have one (initial load, or after complete cleared it).
+    if (fileUrl) {
+      return; // Keep existing PDF; handleComplete clears fileUrl before fetching signed PDF, so transition is covered
     }
     fetchFileUrl();
   }, [info, fetchFileUrl, fileUrl]);
