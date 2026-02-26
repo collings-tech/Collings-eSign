@@ -1,7 +1,7 @@
 const express = require('express');
 const SignRequest = require('../models/SignRequest');
 const Document = require('../models/Document');
-const { saveSignatureOnly, saveFieldValue, completeSigning } = require('../services/signing.service');
+const { saveSignatureOnly, saveFieldValue, completeSigning, approveSigning, declineSigning } = require('../services/signing.service');
 const AuditLog = require('../models/AuditLog');
 const { logEvent } = require('../services/audit.service');
 const storageService = require('../services/storage.service');
@@ -104,6 +104,7 @@ router.get('/:token', async (req, res) => {
         ...(signReq.signatureData ? { signatureData: signReq.signatureData } : {}),
         ...(signReq.fieldSignatureData && Object.keys(signReq.fieldSignatureData).length > 0 ? { fieldSignatureData: signReq.fieldSignatureData } : {}),
         ...(signReq.fieldValues && Object.keys(signReq.fieldValues).length > 0 ? { fieldValues: signReq.fieldValues } : {}),
+        ...(signReq.approvedAt ? { approvedAt: signReq.approvedAt } : {}),
       },
     });
   } catch (err) {
@@ -183,10 +184,12 @@ router.post('/:token/complete', async (req, res) => {
       const t = String(f.type || 'signature').toLowerCase();
       return t === 'signature' || t === 'initial';
     });
+    const hasApproveField = (signReq.signatureFields || []).some((f) => String(f.type || '').toLowerCase() === 'approve');
+    const hasApproved = signReq.approvedAt && signReq.approvedAt instanceof Date;
     const hasPerField = signReq.fieldSignatureData && typeof signReq.fieldSignatureData === 'object' && Object.keys(signReq.fieldSignatureData).length > 0;
     const allFieldsSigned = sigFields.length === 0 || (hasPerField && sigFields.every((f) => signReq.fieldSignatureData[f.id]));
     const hasLegacy = !!signReq.signatureData;
-    if (!allFieldsSigned && !hasLegacy) {
+    if (!allFieldsSigned && !hasLegacy && !(hasApproveField && hasApproved)) {
       return res.status(400).json({ error: 'Sign all required fields before completing' });
     }
     const ip =
@@ -198,6 +201,38 @@ router.post('/:token/complete', async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     console.error('[signing] complete failed', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+});
+
+// Public: DocuSign-style Approve — record that recipient approved (enables Complete without signing).
+router.post('/:token/approve', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const signReq = await SignRequest.findOne({ signLinkToken: token });
+    if (!signReq) return res.status(404).json({ error: 'Sign request not found' });
+    if (isSignLinkExpired(signReq)) return res.status(410).json({ error: 'This link has expired', code: 'LINK_EXPIRED' });
+    await approveSigning({ token });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[signing] approve failed', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+});
+
+// Public: DocuSign-style Decline — void document and apply VOID watermark.
+router.post('/:token/decline', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const signReq = await SignRequest.findOne({ signLinkToken: token });
+    if (!signReq) return res.status(404).json({ error: 'Sign request not found' });
+    if (isSignLinkExpired(signReq)) return res.status(410).json({ error: 'This link has expired', code: 'LINK_EXPIRED' });
+    const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.socket.remoteAddress;
+    const userAgent = req.headers['user-agent'] || '';
+    await declineSigning({ token, ip, userAgent });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[signing] decline failed', err);
     res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });

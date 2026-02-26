@@ -78,7 +78,7 @@ export default function PdfThumbnails({
                       onRotate?.(pageNum);
                     }}
                   >
-                    ↻
+                    <i className="lni lni-refresh-circle-1-clockwise" aria-hidden />
                   </button>
                   <button
                     type="button"
@@ -89,7 +89,7 @@ export default function PdfThumbnails({
                       onDelete?.(pageNum);
                     }}
                   >
-                    🗑
+                    <i className="lni lni-trash-3" aria-hidden />
                   </button>
                 </div>
               </div>

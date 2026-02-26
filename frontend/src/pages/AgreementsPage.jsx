@@ -19,6 +19,7 @@ function mapDocStatusToBucket(status) {
   if (status === "draft") return "drafts";
   if (status === "pending") return "in_progress";
   if (status === "completed") return "completed";
+  if (status === "voided") return "void";
   if (status === "deleted") return "deleted";
   return "all";
 }
@@ -26,6 +27,7 @@ function mapDocStatusToBucket(status) {
 function getStatusLabel(agreement, userEmail) {
   if (agreement.status === "draft") return "Draft";
   if (agreement.status === "completed") return "Completed";
+  if (agreement.status === "voided") return "Voided";
   if (agreement.status === "deleted") return "Deleted";
   if (agreement.mySignRequest && agreement.mySignRequest.status !== "signed") return "Need to sign";
   const signRequests = agreement.signRequests || [];
@@ -54,6 +56,12 @@ export default function AgreementsPage() {
   const [resendEdits, setResendEdits] = useState({});
   const [resendSubmitting, setResendSubmitting] = useState(false);
   const [resendError, setResendError] = useState("");
+  const [voidModalDoc, setVoidModalDoc] = useState(null);
+  const [voidSubmitting, setVoidSubmitting] = useState(false);
+  const [saveAsTemplateModalDoc, setSaveAsTemplateModalDoc] = useState(null);
+  const [templateLabel, setTemplateLabel] = useState("");
+  const [saveTemplateSubmitting, setSaveTemplateSubmitting] = useState(false);
+  const [saveTemplateError, setSaveTemplateError] = useState("");
 
   const [bucket, setBucket] = useState("all");
   const [query, setQuery] = useState("");
@@ -115,7 +123,7 @@ export default function AgreementsPage() {
   }, [bucket, query]);
 
   const counts = useMemo(() => {
-    const next = { all: docs.length, drafts: 0, in_progress: 0, completed: 0, deleted: deletedDocs.length };
+    const next = { all: docs.length, drafts: 0, in_progress: 0, completed: 0, void: 0, deleted: deletedDocs.length };
     for (const d of docs) {
       const b = mapDocStatusToBucket(d.status);
       if (b in next) next[b] += 1;
@@ -130,9 +138,11 @@ export default function AgreementsPage() {
         ? "In Progress"
         : bucket === "completed"
           ? "Completed"
-          : bucket === "deleted"
-            ? "Deleted"
-            : "All agreements";
+          : bucket === "void"
+            ? "Void"
+            : bucket === "deleted"
+              ? "Deleted"
+              : "All agreements";
 
   const openResendModal = (agreement) => {
     const waiting = (agreement.signRequests || []).filter((sr) => sr.status !== "signed");
@@ -224,9 +234,60 @@ export default function AgreementsPage() {
     }
   };
 
-  const handleSaveAsTemplate = (doc) => {
+  const openVoidModal = (doc) => {
     setMenuOpenId(null);
-    // Placeholder: could duplicate doc as template
+    setVoidModalDoc(doc);
+  };
+
+  const closeVoidModal = () => setVoidModalDoc(null);
+
+  const handleVoidConfirm = async () => {
+    if (!voidModalDoc) return;
+    setVoidSubmitting(true);
+    try {
+      await apiClient.patch(`/documents/${voidModalDoc._id}/void`);
+      closeVoidModal();
+      refetch();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setVoidSubmitting(false);
+    }
+  };
+
+  const openSaveAsTemplateModal = (doc) => {
+    setMenuOpenId(null);
+    setSaveAsTemplateModalDoc(doc);
+    setTemplateLabel("");
+    setSaveTemplateError("");
+  };
+
+  const closeSaveAsTemplateModal = () => {
+    setSaveAsTemplateModalDoc(null);
+    setTemplateLabel("");
+    setSaveTemplateError("");
+  };
+
+  const handleSaveAsTemplateSubmit = async () => {
+    if (!saveAsTemplateModalDoc || !templateLabel.trim()) {
+      setSaveTemplateError("Template label is required.");
+      return;
+    }
+    setSaveTemplateSubmitting(true);
+    setSaveTemplateError("");
+    try {
+      await apiClient.post(`/documents/${saveAsTemplateModalDoc._id}/save-as-template`, {
+        templateLabel: templateLabel.trim(),
+      });
+      closeSaveAsTemplateModal();
+      refetch();
+      navigate("/templates");
+    } catch (err) {
+      console.error(err);
+      setSaveTemplateError(err.response?.data?.error || "Failed to save as template");
+    } finally {
+      setSaveTemplateSubmitting(false);
+    }
   };
 
   const isOwner = (doc) => doc.ownerId && user?.id && String(doc.ownerId) === String(user.id);
@@ -275,6 +336,14 @@ export default function AgreementsPage() {
               >
                 Completed
                 <span className="agreements-count">{counts.completed}</span>
+              </button>
+              <button
+                type="button"
+                className={`agreements-nav-sub ${bucket === "void" ? "active" : ""}`}
+                onClick={() => setBucket("void")}
+              >
+                Void
+                <span className="agreements-count">{counts.void}</span>
               </button>
               <button
                 type="button"
@@ -365,6 +434,8 @@ export default function AgreementsPage() {
               <div className="agreements-row muted">Loading…</div>
             ) : bucket === "deleted" && !filteredDocs.length ? (
               <div className="agreements-row muted">No deleted agreements.</div>
+            ) : bucket === "void" && !filteredDocs.length ? (
+              <div className="agreements-row muted">No voided agreements.</div>
             ) : !filteredDocs.length ? (
               <div className="agreements-row muted">No agreements found.</div>
             ) : (
@@ -373,6 +444,7 @@ export default function AgreementsPage() {
                 const needToSign = agreement.mySignRequest && agreement.mySignRequest.status !== "signed";
                 const isPending = agreement.status === "pending";
                 const isCompleted = agreement.status === "completed";
+                const isVoided = agreement.status === "voided";
                 const canOpen = agreement.status !== "deleted" && (isOwner(agreement) || needToSign);
                 const loadingThis = actionLoading === agreement._id;
                 const menuOpen = menuOpenId === agreement._id;
@@ -392,8 +464,8 @@ export default function AgreementsPage() {
                       <div className="agreements-sub">{getRecipientsLine(agreement)}</div>
                     </div>
                     <div className="agreements-col-status">
-                      <span className={`status-pill status-${agreement.status} ${isCompleted ? "status-completed" : ""}`}>
-                        {isCompleted && <span className="agreements-status-icon" aria-hidden>✓</span>}
+                      <span className={`status-pill status-${agreement.status} ${isCompleted ? "status-completed" : ""} ${isVoided ? "status-voided" : ""}`}>
+                        {isCompleted && <i className="lni lni-check agreements-status-icon" aria-hidden />}
                         {statusLabel}
                       </span>
                     </div>
@@ -424,7 +496,7 @@ export default function AgreementsPage() {
                               Resend
                             </button>
                           )}
-                          {isCompleted && (
+                          {(isCompleted || isVoided) && (
                             <button
                               type="button"
                               className="agreements-action agreements-action-secondary"
@@ -433,7 +505,7 @@ export default function AgreementsPage() {
                               Download
                             </button>
                           )}
-                          {!needToSign && !isPending && !isCompleted && isOwner(agreement) && (
+                          {!needToSign && !isPending && !isCompleted && !isVoided && isOwner(agreement) && (
                             <Link to={`/documents/${agreement._id}`} className="agreements-action agreements-action-secondary">
                               Open
                             </Link>
@@ -455,9 +527,14 @@ export default function AgreementsPage() {
                               <>
                                 <div className="agreements-menu-backdrop" onClick={() => setMenuOpenId(null)} aria-hidden />
                                 <div className="agreements-menu-dropdown" role="menu">
-                                  <button type="button" className="agreements-menu-item" role="menuitem" onClick={() => handleSaveAsTemplate(agreement)}>
+                                  <button type="button" className="agreements-menu-item" role="menuitem" onClick={() => openSaveAsTemplateModal(agreement)}>
                                     Save as template
                                   </button>
+                                  {isOwner(agreement) && agreement.status !== "voided" && agreement.status !== "deleted" && (
+                                    <button type="button" className="agreements-menu-item" role="menuitem" onClick={() => openVoidModal(agreement)}>
+                                      Void
+                                    </button>
+                                  )}
                                   {isOwner(agreement) && (
                                     <button type="button" className="agreements-menu-item agreements-menu-item-danger" role="menuitem" onClick={() => handleTrash(agreement)}>
                                       Delete
@@ -510,6 +587,97 @@ export default function AgreementsPage() {
         </section>
       </div>
 
+      {voidModalDoc && (
+        <div
+          className="adopt-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="void-modal-title"
+          onClick={closeVoidModal}
+        >
+          <div className="adopt-modal" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="adopt-modal-close"
+              onClick={closeVoidModal}
+              aria-label="Close"
+            >
+              <i className="lni lni-xmark" aria-hidden />
+            </button>
+            <h2 id="void-modal-title" className="adopt-modal-title">
+              Void this document?
+            </h2>
+            <p className="adopt-modal-subtitle">
+              This document will be voided and a large <strong>VOID</strong> watermark will be written on all pages. This action cannot be undone.
+            </p>
+            <div className="adopt-modal-actions">
+              <button type="button" className="adopt-btn secondary" onClick={closeVoidModal} disabled={voidSubmitting}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="adopt-btn primary"
+                onClick={handleVoidConfirm}
+                disabled={voidSubmitting}
+              >
+                {voidSubmitting ? "Voiding…" : "Void document"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {saveAsTemplateModalDoc && (
+        <div
+          className="adopt-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="save-template-modal-title"
+          onClick={closeSaveAsTemplateModal}
+        >
+          <div className="adopt-modal" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="adopt-modal-close"
+              onClick={closeSaveAsTemplateModal}
+              aria-label="Close"
+            >
+              <i className="lni lni-xmark" aria-hidden />
+            </button>
+            <h2 id="save-template-modal-title" className="adopt-modal-title">
+              Save as template
+            </h2>
+            <p className="adopt-modal-subtitle">
+              Enter a name for this template. The document will be saved as a reusable template.
+            </p>
+            <label className="adopt-modal-field">
+              <span>Template label</span>
+              <input
+                type="text"
+                value={templateLabel}
+                onChange={(e) => setTemplateLabel(e.target.value)}
+                placeholder="e.g. Employment Agreement"
+                autoFocus
+              />
+            </label>
+            {saveTemplateError && <p className="adopt-error">{saveTemplateError}</p>}
+            <div className="adopt-modal-actions">
+              <button type="button" className="adopt-btn secondary" onClick={closeSaveAsTemplateModal} disabled={saveTemplateSubmitting}>
+                Back
+              </button>
+              <button
+                type="button"
+                className="adopt-btn primary"
+                onClick={handleSaveAsTemplateSubmit}
+                disabled={saveTemplateSubmitting || !templateLabel.trim()}
+              >
+                {saveTemplateSubmitting ? "Saving…" : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {resendModalDoc && (
         <div
           className="adopt-modal-backdrop"
@@ -525,7 +693,7 @@ export default function AgreementsPage() {
               onClick={closeResendModal}
               aria-label="Close"
             >
-              ×
+              <i className="lni lni-xmark" aria-hidden />
             </button>
             <h2 id="resend-modal-title" className="adopt-modal-title">
               Resend to recipients

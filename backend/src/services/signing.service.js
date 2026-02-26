@@ -4,7 +4,7 @@ const SignRequest = require("../models/SignRequest");
 const User = require("../models/User");
 const { logEvent } = require("./audit.service");
 const { sendSignRequestEmail, sendDocuSignStyleSignEmail, sendDocumentCompletedEmail, sendSignedWaitingForOthersEmail } = require("./email.service");
-const { embedSignatureInPdf } = require("./pdfSign.service");
+const { embedSignatureInPdf, applyVoidWatermark } = require("./pdfSign.service");
 
 function generateToken() {
   return crypto.randomBytes(32).toString("hex");
@@ -106,20 +106,22 @@ async function completeSigning({ token, ip, userAgent }) {
     const t = String(f.type || "signature").toLowerCase();
     return t === "signature" || t === "initial";
   });
+  const hasApproveField = fields.some((f) => String(f.type || "").toLowerCase() === "approve");
+  const hasApproved = signRequest.approvedAt && signRequest.approvedAt instanceof Date;
   const hasPerField = signRequest.fieldSignatureData && typeof signRequest.fieldSignatureData === "object" && Object.keys(signRequest.fieldSignatureData).length > 0;
   if (sigFields.length > 0) {
     if (hasPerField) {
       const missing = sigFields.filter((f) => !signRequest.fieldSignatureData[f.id]);
-      if (missing.length > 0) {
+      if (missing.length > 0 && !(hasApproveField && hasApproved)) {
         const err = new Error("Please sign all required fields before completing.");
         err.code = "FIELDS_UNSIGNED";
         throw err;
       }
-    } else if (!signRequest.signatureData) {
-      return null; // Must have signed first (legacy single signature)
+    } else if (!signRequest.signatureData && !(hasApproveField && hasApproved)) {
+      return null; // Must have signed first (legacy single signature) or approved
     }
   }
-  // If no signature fields, allow complete (e.g. document with only text fields)
+  // If no signature fields, allow complete (e.g. document with only text fields, or approve-only)
 
   const doc = await Document.findById(signRequest.documentId).lean();
   if (!doc) {
@@ -207,6 +209,67 @@ async function completeSigning({ token, ip, userAgent }) {
   return signRequest;
 }
 
+/** DocuSign-style: record that recipient clicked Approve (allows completion without signing). */
+async function approveSigning({ token }) {
+  const signRequest = await SignRequest.findOne({ signLinkToken: token });
+  if (!signRequest) return null;
+  if (signRequest.status === "signed") return signRequest;
+  signRequest.approvedAt = new Date();
+  await signRequest.save();
+  await logEvent({
+    documentId: signRequest.documentId,
+    signRequestId: signRequest._id,
+    actorType: "signer",
+    actorIdOrEmail: signRequest.signerEmail,
+    eventType: "approved",
+  });
+  return signRequest;
+}
+
+/** DocuSign-style: recipient declined; document becomes void with VOID watermark. */
+async function declineSigning({ token, ip, userAgent }) {
+  const signRequest = await SignRequest.findOne({ signLinkToken: token });
+  if (!signRequest) return null;
+  if (signRequest.status === "signed") {
+    const err = new Error("You have already signed this document.");
+    err.code = "ALREADY_SIGNED";
+    throw err;
+  }
+  const doc = await Document.findById(signRequest.documentId).lean();
+  if (!doc) throw new Error("Document not found");
+  if (doc.status === "voided") return signRequest;
+
+  signRequest.status = "declined";
+  signRequest.signerIp = ip;
+  signRequest.userAgent = userAgent;
+  await signRequest.save();
+
+  await logEvent({
+    documentId: signRequest.documentId,
+    signRequestId: signRequest._id,
+    actorType: "signer",
+    actorIdOrEmail: signRequest.signerEmail,
+    eventType: "declined",
+  });
+
+  let voidedResult;
+  try {
+    voidedResult = await applyVoidWatermark(doc);
+  } catch (err) {
+    console.error("[signing] applyVoidWatermark failed", err);
+    throw err;
+  }
+  const update = {};
+  if (voidedResult.startsWith("documents/")) {
+    update.signedKey = voidedResult;
+  } else {
+    update.signedFilePath = voidedResult;
+  }
+  update.status = "voided";
+  await Document.findByIdAndUpdate(signRequest.documentId, update);
+  return signRequest;
+}
+
 /** When document has signing order, send email to the next signer who has not yet been sent to. */
 async function sendToNextSignerInOrder(documentId) {
   const doc = await Document.findById(documentId).lean();
@@ -247,4 +310,6 @@ module.exports = {
   saveSignatureOnly,
   saveFieldValue,
   completeSigning,
+  approveSigning,
+  declineSigning,
 };

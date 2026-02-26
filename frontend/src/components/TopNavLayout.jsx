@@ -42,6 +42,7 @@ export default function TopNavLayout({ children }) {
   const isHome = path === "/";
   const isAgreements =
     path.startsWith("/agreements") || path.startsWith("/documents/");
+  const isTemplates = path.startsWith("/templates");
 
   const navLinks = (
     <>
@@ -51,7 +52,9 @@ export default function TopNavLayout({ children }) {
       <Link to="/agreements" className={`top-nav-link ${isAgreements ? "active" : ""}`.trim()} onClick={closeSidebar}>
         Agreements
       </Link>
-      <span className="top-nav-link muted-link" aria-current="false">Templates</span>
+      <Link to="/templates" className={`top-nav-link ${isTemplates ? "active" : ""}`.trim()} onClick={closeSidebar}>
+        Templates
+      </Link>
       <span className="top-nav-link muted-link" aria-current="false">Reports</span>
     </>
   );
@@ -106,16 +109,14 @@ export default function TopNavLayout({ children }) {
               <div className="top-header-user-menu-head">
                 <div className="top-header-user-menu-name">{user?.name || "User"}</div>
                 <div className="top-header-user-menu-email">{user?.email}</div>
-                <a
-                  href="/profile"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <Link
+                  to="/profile"
                   className="top-header-user-menu-manage"
-                  aria-label="Manage profile (opens in new tab)"
+                  aria-label="Manage profile"
                   onClick={() => setUserMenuOpen(false)}
                 >
                   Manage Profile
-                </a>
+                </Link>
               </div>
               <div className="top-header-user-menu-sep" aria-hidden="true" />
               <div className="top-header-user-menu-links" role="none">

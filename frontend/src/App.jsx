@@ -6,6 +6,8 @@ import DashboardPage from "./pages/DashboardPage.jsx";
 import AgreementsPage from "./pages/AgreementsPage.jsx";
 import NewAgreementPage from "./pages/NewAgreementPage.jsx";
 import DocumentDetailPage from "./pages/DocumentDetailPage.jsx";
+import TemplatesPage from "./pages/TemplatesPage.jsx";
+import TemplateViewPage from "./pages/TemplateViewPage.jsx";
 import ProfilePage from "./pages/ProfilePage.jsx";
 import SigningPage from "./pages/SigningPage.jsx";
 import { AuthProvider, useAuth } from "./auth/AuthContext.jsx";
@@ -43,6 +45,22 @@ function AppRoutes() {
         element={
           <PrivateRoute>
             <AgreementsPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/templates"
+        element={
+          <PrivateRoute>
+            <TemplatesPage />
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/templates/:id"
+        element={
+          <PrivateRoute>
+            <TemplateViewPage />
           </PrivateRoute>
         }
       />

@@ -132,7 +132,7 @@ export default function AdoptSignatureModal({ open, onClose, signerName = "", si
     <div className="adopt-modal-backdrop" onClick={handleClose} role="dialog" aria-modal="true" aria-labelledby="adopt-modal-title">
       <div className="adopt-modal" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="adopt-modal-close" onClick={handleClose} aria-label="Close">
-          ×
+          <i className="lni lni-xmark" aria-hidden />
         </button>
         <h2 id="adopt-modal-title" className="adopt-modal-title">{initialsOnly ? "Adopt Your Initials" : "Adopt Your Signature"}</h2>
         <p className="adopt-modal-subtitle">{initialsOnly ? "Confirm your initials for this document." : "Confirm your name, initials, and signature."}</p>

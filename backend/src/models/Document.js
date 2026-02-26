@@ -26,7 +26,7 @@ const documentSchema = new mongoose.Schema(
     signedAt: { type: Date },        // set when document is fully signed (all signers done)
     status: {
       type: String,
-      enum: ['draft', 'pending', 'completed', 'cancelled', 'deleted'],
+      enum: ['draft', 'pending', 'completed', 'cancelled', 'voided', 'deleted'],
       default: 'draft',
     },
     recipients: [recipientSchema],
@@ -42,6 +42,7 @@ const documentSchema = new mongoose.Schema(
     // Render size of first page when fields were placed (for accurate signature placement)
     page1RenderWidth: { type: Number },
     page1RenderHeight: { type: Number },
+    isTemplate: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

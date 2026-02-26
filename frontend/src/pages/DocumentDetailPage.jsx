@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { apiClient, getProfileImageUrl } from "../api/client";
 import { useAuth } from "../auth/AuthContext.jsx";
 import TopNavLayout from "../components/TopNavLayout.jsx";
@@ -18,6 +18,7 @@ const STANDARD_FIELDS = [
   { group: "Signature Fields", items: ["Signature", "Initial", "Stamp", "Date Signed"] },
   { group: "Personal Information Fields", items: ["Name", "Email", "Company", "Title"] },
   { group: "Data Input Fields", items: ["Text", "Number", "Checkbox", "Dropdown", "Radio"] },
+  { group: "Action Fields", items: ["Note", "Approve", "Decline"] },
 ];
 
 // const STANDARD_FIELDS = [
@@ -26,19 +27,22 @@ const STANDARD_FIELDS = [
 // ];
 
 const FIELD_ICONS = {
-  Signature: "✒",
-  Initial: "✒",
-  Stamp: "▣",
-  "Date Signed": "📅",
-  Name: "👤",
+  Signature: <i className="lni lni-pen-to-square" aria-hidden />,
+  Initial: <i className="lni lni-pen-to-square" aria-hidden />,
+  Stamp: <i className="lni lni-stamp" aria-hidden />,
+  "Date Signed": <i className="lni lni-calendar-days" aria-hidden />,
+  Name: <i className="lni lni-user-4" aria-hidden />,
   Email: "@",
-  Company: "🏢",
-  Title: "💼",
+  Company: <i className="lni lni-buildings-1" aria-hidden />,
+  Title: <i className="lni lni-briefcase-1" aria-hidden />,
   Text: "T",
   Number: "#",
-  Checkbox: "☑",
-  Dropdown: "▾",
+  Checkbox: <i className="lni lni-check-square-2" aria-hidden />,
+  Dropdown: <i className="lni lni-angle-double-down" aria-hidden />,
   Radio: "○",
+  Note: <i className="lni lni-clipboard" aria-hidden />,
+  Approve: <i className="lni lni-check-circle-1" aria-hidden />,
+  Decline: <i className="lni lni-xmark-circle" aria-hidden />,
 };
 
 function generateFieldId() {
@@ -109,6 +113,9 @@ function fieldTypeToBackend(displayType) {
     Checkbox: "checkbox",
     Dropdown: "dropdown",
     Radio: "radio",
+    Note: "note",
+    Approve: "approve",
+    Decline: "decline",
   };
   return map[displayType] || String(displayType).toLowerCase();
 }
@@ -126,7 +133,7 @@ function EditValuesModal({ options: initialOptions, onSave, onClose }) {
       <div className="prepare-edit-values-modal" onClick={(e) => e.stopPropagation()}>
         <div className="prepare-edit-values-header">
           <h2 id="edit-values-title" className="prepare-edit-values-title">Edit values</h2>
-          <button type="button" className="prepare-edit-values-close" onClick={onClose} aria-label="Close">✕</button>
+          <button type="button" className="prepare-edit-values-close" onClick={onClose} aria-label="Close"><i className="lni lni-xmark" aria-hidden /></button>
         </div>
         <p className="prepare-edit-values-hint">Enter internal data values for this list of dropdown options.</p>
         <div className="prepare-edit-values-table">
@@ -165,7 +172,7 @@ function EditValuesModal({ options: initialOptions, onSave, onClose }) {
                 onClick={() => setOpts(opts.filter((_, i) => i !== idx))}
                 aria-label="Remove option"
               >
-                ✕
+                <i className="lni lni-xmark" aria-hidden />
               </button>
             </div>
           ))}
@@ -192,9 +199,11 @@ function EditValuesModal({ options: initialOptions, onSave, onClose }) {
   );
 }
 
-export default function DocumentDetailPage() {
+function DocumentDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const isTemplateFlow = location.state?.isTemplateFlow === true;
   const { user } = useAuth();
   const [doc, setDoc] = useState(null);
   const [signers, setSigners] = useState([]);
@@ -227,6 +236,10 @@ export default function DocumentDetailPage() {
   const [pageRotations, setPageRotations] = useState({});
   const [pageToDelete, setPageToDelete] = useState(null);
   const [deletingPage, setDeletingPage] = useState(false);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [saveAsTemplateModalOpen, setSaveAsTemplateModalOpen] = useState(false);
+  const [templateLabel, setTemplateLabel] = useState("");
+  const [saveTemplateError, setSaveTemplateError] = useState("");
   const [editValuesModalOpen, setEditValuesModalOpen] = useState(false);
   const [fieldsPopupOpen, setFieldsPopupOpen] = useState(false); // mobile: fields panel as popup
   const [rightPanelPopupOpen, setRightPanelPopupOpen] = useState(false); // mobile: Pages/Properties as popup
@@ -308,7 +321,7 @@ export default function DocumentDetailPage() {
         const typeToLabel = (t) => {
           if (!t) return "Signature";
           const lower = String(t).toLowerCase();
-          const map = { signature: "Signature", initial: "Initial", stamp: "Stamp", date: "Date Signed", name: "Name", email: "Email", company: "Company", title: "Title", text: "Text", number: "Number", checkbox: "Checkbox", dropdown: "Dropdown", radio: "Radio" };
+          const map = { signature: "Signature", initial: "Initial", stamp: "Stamp", date: "Date Signed", name: "Name", email: "Email", company: "Company", title: "Title", text: "Text", number: "Number", checkbox: "Checkbox", dropdown: "Dropdown", radio: "Radio", note: "Note", approve: "Approve", decline: "Decline" };
           return map[lower] || (t.charAt(0).toUpperCase() + (t.slice(1) || "").toLowerCase());
         };
         const built = signerList.flatMap((sr) =>
@@ -408,8 +421,10 @@ export default function DocumentDetailPage() {
   const addField = useCallback((type, position) => {
     const recipientId = selectedRecipientId || signers[0]?._id;
     const defaultPage = 1;
-    const defWPct = 14;
-    const defHPct = 6;
+    const DATA_INPUT_COMPACT = ["Checkbox", "Radio"];
+    const DATA_INPUT_RECTANGLE = ["Text", "Number", "Dropdown", "Name", "Email", "Company", "Title"];
+    const defWPct = DATA_INPUT_COMPACT.includes(type) ? 12 : DATA_INPUT_RECTANGLE.includes(type) ? 16 : 14;
+    const defHPct = DATA_INPUT_COMPACT.includes(type) ? 3 : DATA_INPUT_RECTANGLE.includes(type) ? 4 : 6;
     const base = {
       id: generateFieldId(),
       type,
@@ -437,13 +452,25 @@ export default function DocumentDetailPage() {
       newField = { ...newField, options: [], defaultOption: "" };
     }
     if (type === "Name") {
-      newField = { ...newField, nameFormat: "Full Name", ...textFormatting };
+      newField = { ...newField, nameFormat: "Full Name", dataLabel: "Full Name", ...textFormatting };
     }
     if (TEXT_FORMATTING_FIELDS.includes(type)) {
       newField = { ...newField, readOnly: false, ...textFormatting };
     }
     if (type === "Text") {
       newField = { ...newField, addText: "", characterLimit: 4000, hideWithAsterisks: false, fixedWidth: false };
+    }
+    if (type === "Checkbox") {
+      newField = { ...newField, caption: "", checked: false };
+    }
+    if (type === "Number") {
+      newField = { ...newField, readOnly: false, minValue: undefined, maxValue: undefined, decimalPlaces: 0, placeholder: "", ...textFormatting };
+    }
+    if (type === "Radio") {
+      newField = { ...newField, groupName: "" };
+    }
+    if (type === "Note") {
+      newField = { ...newField, noteContent: "" };
     }
     setPlacedFields((prev) => [...prev, newField]);
     setSelectedFieldId(newField.id);
@@ -550,8 +577,10 @@ export default function DocumentDetailPage() {
     };
   }, [pendingFieldType, clientToPercentCoords]);
 
-  const pendingWPct = (pendingFieldType === "Signature" || pendingFieldType === "Initial") ? 14 : 14;
-  const pendingHPct = (pendingFieldType === "Signature" || pendingFieldType === "Initial") ? 6 : 5;
+  const DATA_INPUT_COMPACT = ["Checkbox", "Radio"];
+  const DATA_INPUT_RECTANGLE = ["Text", "Number", "Dropdown", "Name", "Email", "Company", "Title"];
+  const pendingWPct = DATA_INPUT_COMPACT.includes(pendingFieldType) ? 12 : DATA_INPUT_RECTANGLE.includes(pendingFieldType) ? 16 : 14;
+  const pendingHPct = DATA_INPUT_COMPACT.includes(pendingFieldType) ? 3 : DATA_INPUT_RECTANGLE.includes(pendingFieldType) ? 4 : (pendingFieldType === "Signature" || pendingFieldType === "Initial") ? 6 : 5;
 
   /** DocuSign-style: place field on document click when one is carried by cursor (center at click). Uses percent coords. */
   const handleDocumentPlaceClick = useCallback((e) => {
@@ -757,7 +786,13 @@ export default function DocumentDetailPage() {
     }
   };
 
-  const handleBack = () => navigate("/documents/new", { state: { editDocumentId: id } });
+  const handleBack = () => {
+    if (isTemplateFlow) {
+      navigate("/templates");
+    } else {
+      navigate("/documents/new", { state: { editDocumentId: id } });
+    }
+  };
 
   const confirmDeletePage = useCallback(async () => {
     if (pageToDelete == null) return;
@@ -810,6 +845,25 @@ export default function DocumentDetailPage() {
       if (f.hideWithAsterisks != null) base.hideWithAsterisks = f.hideWithAsterisks;
       if (f.fixedWidth != null) base.fixedWidth = f.fixedWidth;
     }
+    if (f.type === "Checkbox") {
+      if (f.caption != null) base.caption = f.caption;
+      if (f.checked != null) base.checked = f.checked;
+    }
+    if (f.type === "Number") {
+      if (f.readOnly != null) base.readOnly = f.readOnly;
+      if (f.minValue != null) base.minValue = f.minValue;
+      if (f.maxValue != null) base.maxValue = f.maxValue;
+      if (f.decimalPlaces != null) base.decimalPlaces = f.decimalPlaces;
+      if (f.placeholder != null) base.placeholder = f.placeholder;
+      if (f.fontFamily != null) base.fontFamily = f.fontFamily;
+      if (f.fontSize != null) base.fontSize = f.fontSize;
+      if (f.bold != null) base.bold = f.bold;
+      if (f.italic != null) base.italic = f.italic;
+      if (f.underline != null) base.underline = f.underline;
+      if (f.fontColor != null) base.fontColor = f.fontColor;
+    }
+    if (f.type === "Radio" && f.groupName != null) base.groupName = f.groupName;
+    if (f.type === "Note" && f.noteContent != null) base.noteContent = f.noteContent;
     return base;
   }, []);
 
@@ -862,6 +916,58 @@ export default function DocumentDetailPage() {
       setSendError(message);
     } finally {
       setSending(false);
+    }
+  };
+
+  const openSaveAsTemplateModal = () => {
+    setSaveAsTemplateModalOpen(true);
+    setTemplateLabel(doc?.title || "");
+    setSaveTemplateError("");
+  };
+
+  const closeSaveAsTemplateModal = () => {
+    setSaveAsTemplateModalOpen(false);
+    setTemplateLabel("");
+    setSaveTemplateError("");
+  };
+
+  const handleSaveAsTemplate = async () => {
+    const label = templateLabel.trim();
+    if (!label) {
+      setSaveTemplateError("Template label is required.");
+      return;
+    }
+    setSavingTemplate(true);
+    setSaveTemplateError("");
+    try {
+      await apiClient.put(`/documents/${id}/signing-fields`, {
+        fields: placedFields.map(mapFieldToPayload),
+      });
+      await apiClient.put(`/documents/${id}`, { isTemplate: true, title: label });
+      setDoc((prev) => prev ? { ...prev, isTemplate: true, title: label } : prev);
+      closeSaveAsTemplateModal();
+      navigate("/templates");
+    } catch (err) {
+      console.error(err);
+      setSaveTemplateError(err.response?.data?.error || "Failed to save as template");
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
+  const handleSaveEdits = async () => {
+    setSavingFields(true);
+    setError("");
+    try {
+      await apiClient.put(`/documents/${id}/signing-fields`, {
+        fields: placedFields.map(mapFieldToPayload),
+      });
+      navigate("/templates");
+    } catch (err) {
+      console.error(err);
+      setError(err.response?.data?.error || "Failed to save edits");
+    } finally {
+      setSavingFields(false);
     }
   };
 
@@ -932,7 +1038,7 @@ export default function DocumentDetailPage() {
           <div className="agreement-detail-status-row">
             <div className="agreement-detail-status-left">
               <span className="agreement-detail-status-badge">
-                <span className="agreement-detail-status-icon">✒</span>
+                <span className="agreement-detail-status-icon"><i className="lni lni-pen-to-square" aria-hidden /></span>
                 {allSigned ? "Completed" : "Need to sign"}
               </span>
               {expiringDate && (
@@ -1022,7 +1128,7 @@ export default function DocumentDetailPage() {
                             <span className="agreement-detail-recipient-email">{sr.signerEmail}</span>
                           </div>
                           <div className="agreement-detail-recipient-status">
-                            <span className="agreement-detail-recipient-status-icon">✒</span>
+                            <span className="agreement-detail-recipient-status-icon"><i className="lni lni-pen-to-square" aria-hidden /></span>
                             {sr.status === "signed" ? "Signed" : "Needs to Sign"}
                             {(sr.signedAt || (sr.status !== "signed" && sr.updatedAt)) && (
                               <span className="agreement-detail-recipient-date">{formatEnvelopeDate(sr.signedAt || sr.updatedAt)}</span>
@@ -1055,7 +1161,7 @@ export default function DocumentDetailPage() {
                       <dt>Envelope ID</dt>
                       <dd>
                         {doc._id}
-                        <button type="button" className="agreement-detail-copy-inline" onClick={copyEnvelopeId} aria-label="Copy">📋</button>
+                        <button type="button" className="agreement-detail-copy-inline" onClick={copyEnvelopeId} aria-label="Copy"><i className="lni lni-clipboard" aria-hidden /></button>
                       </dd>
                     </div>
                     <div className="agreement-detail-detail-row">
@@ -1128,11 +1234,8 @@ export default function DocumentDetailPage() {
         {sendSuccess == null && (
         <header className="prepare-header">
           <div className="prepare-header-left">
-            <button type="button" className="prepare-icon-btn" onClick={handleBack} aria-label="Close">
-              ✕
-            </button>
             <button type="button" className="prepare-icon-btn" onClick={handleBack} aria-label="Back">
-              ‹
+              <i className="lni lni-arrow-left" aria-hidden />
             </button>
             <span className="prepare-doc-name">{doc.title || "Document"}</span>
           </div>
@@ -1147,9 +1250,9 @@ export default function DocumentDetailPage() {
               disabled={savingFields}
               title="Save field placements"
             >
-              {savingFields ? "…" : "💾"}
+              {savingFields ? "…" : <i className="lni lni-floppy-disk-1" aria-hidden />}
             </button> */}
-            {/* <button type="button" className="prepare-icon-btn" aria-label="Delete">🗑</button> */}
+            {/* <button type="button" className="prepare-icon-btn" aria-label="Delete"><i className="lni lni-trash-3" aria-hidden /></button> */}
             <div className="prepare-zoom-wrap">
               <button
                 type="button"
@@ -1211,7 +1314,7 @@ export default function DocumentDetailPage() {
               title="Pages"
               style={{ display: rightPanelPopupOpen ? "none" : undefined }}
             >
-            <span className="prepare-right-fab-icon">📄</span>
+            <span className="prepare-right-fab-icon"><i className="lni lni-file-multiple" aria-hidden /></span>
             <span className="prepare-right-fab-label">Pages</span>
           </button>
 
@@ -1257,7 +1360,7 @@ export default function DocumentDetailPage() {
               </div>
             </div>
             <div className="prepare-search-wrap">
-              <span className="prepare-search-icon">🔍</span>
+              <span className="prepare-search-icon"><i className="lni lni-search-1" aria-hidden /></span>
               <input
                 type="text"
                 className="prepare-search-input"
@@ -1272,7 +1375,7 @@ export default function DocumentDetailPage() {
                   onClick={() => setSearchFields("")}
                   aria-label="Clear"
                 >
-                  ✕
+                  <i className="lni lni-xmark" aria-hidden />
                 </button>
               )}
             </div>
@@ -1321,7 +1424,7 @@ export default function DocumentDetailPage() {
                     onClick={() => setFieldsPopupOpen(false)}
                     aria-label="Close"
                   >
-                    ✕
+                    <i className="lni lni-xmark" aria-hidden />
                   </button>
                 </div>
                 <div className="prepare-fields-popup-body">
@@ -1366,7 +1469,7 @@ export default function DocumentDetailPage() {
                     </div>
                   </div>
                   <div className="prepare-search-wrap">
-                    <span className="prepare-search-icon">🔍</span>
+                    <span className="prepare-search-icon"><i className="lni lni-search-1" aria-hidden /></span>
                     <input
                       type="text"
                       className="prepare-search-input"
@@ -1381,7 +1484,7 @@ export default function DocumentDetailPage() {
                         onClick={() => setSearchFields("")}
                         aria-label="Clear"
                       >
-                        ✕
+                        <i className="lni lni-xmark" aria-hidden />
                       </button>
                     )}
                   </div>
@@ -1459,8 +1562,10 @@ export default function DocumentDetailPage() {
                               {pageFields.map((f) => {
                                 const color = getRecipientColor(f.signRequestId, signers);
                                 const isSignatureType = f.type === "Signature" || f.type === "Initial";
+                                const isNoteField = f.type === "Note";
+                                const isCheckboxField = f.type === "Checkbox";
                                 const isSelected = selectedFieldId === f.id;
-                                const showHandles = isSelected && isSignatureType;
+                                const showHandles = isSelected && (isSignatureType || isNoteField);
                                 const xPct = f.xPct != null ? f.xPct : 8;
                                 const yPct = f.yPct != null ? f.yPct : 10;
                                 const wPct = f.wPct != null ? f.wPct : 14;
@@ -1471,7 +1576,7 @@ export default function DocumentDetailPage() {
                                     ref={f.page === 1 ? overlayRef : undefined}
                                     role="button"
                                     tabIndex={0}
-                                    className={`prepare-placed-field ${isSignatureType ? "prepare-placed-field-sign" : ""} ${isSelected ? "selected" : ""} ${draggingFieldId === f.id ? "dragging" : ""} ${resizingFieldId === f.id ? "resizing" : ""}`}
+                                    className={`prepare-placed-field ${isSignatureType ? "prepare-placed-field-sign" : ""} ${isNoteField ? "prepare-placed-field-note" : ""} ${isCheckboxField ? "prepare-placed-field-checkbox" : ""} ${f.type === "Radio" ? "prepare-placed-field-radio" : ""} ${["Text", "Number", "Dropdown", "Name", "Email", "Company", "Title"].includes(f.type) ? "prepare-placed-field-data-rect" : ""} ${isSelected ? "selected" : ""} ${draggingFieldId === f.id ? "dragging" : ""} ${resizingFieldId === f.id ? "resizing" : ""}`}
                                     style={{
                                       position: "absolute",
                                       left: `${xPct}%`,
@@ -1490,9 +1595,23 @@ export default function DocumentDetailPage() {
                                     }}
                                   >
                                     <span className="prepare-placed-field-icon" aria-hidden>{FIELD_ICONS[f.type] || "•"}</span>
-                                    <span className="prepare-placed-field-label">
-                                      {f.type === "Signature" ? "Sign" : f.type}
-                                    </span>
+                                    {isNoteField ? (
+                                      <div className={`prepare-placed-field-note-content ${!(f.noteContent ?? "").trim() ? "is-placeholder" : ""}`}>
+                                        {(f.noteContent ?? "").trim() || "Note for recipient"}
+                                      </div>
+                                    ) : isCheckboxField ? (
+                                      <span className="prepare-placed-field-label">
+                                        {(f.caption ?? "").trim() || "Checkbox"}
+                                      </span>
+                                    ) : f.type === "Name" ? (
+                                      <span className="prepare-placed-field-label">
+                                        {f.nameFormat ?? "Full Name"}
+                                      </span>
+                                    ) : (
+                                      <span className="prepare-placed-field-label">
+                                        {f.type === "Signature" ? "Sign" : f.type}
+                                      </span>
+                                    )}
                                     {showHandles && (
                                       <>
                                         {["n", "s", "e", "w", "nw", "ne", "sw", "se"].map((h) => (
@@ -1583,7 +1702,10 @@ export default function DocumentDetailPage() {
                     <span className="prepare-property-label">Name format</span>
                     <select
                       value={selectedField.nameFormat ?? "Full Name"}
-                      onChange={(e) => updateField(selectedField.id, { nameFormat: e.target.value })}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        updateField(selectedField.id, { nameFormat: val, dataLabel: val });
+                      }}
                       aria-label="Name format"
                       className="prepare-property-select"
                     >
@@ -1601,7 +1723,7 @@ export default function DocumentDetailPage() {
                   />
                   <span>Required Field</span>
                 </label>
-                {["Company", "Title", "Text"].includes(selectedField.type) && (
+                {["Company", "Title", "Text", "Number"].includes(selectedField.type) && (
                   <label className="prepare-property-row prepare-property-check">
                     <input
                       type="checkbox"
@@ -1610,6 +1732,102 @@ export default function DocumentDetailPage() {
                     />
                     <span>Read Only</span>
                   </label>
+                )}
+                {selectedField.type === "Checkbox" && (
+                  <div className="prepare-property-section prepare-property-section-expanded">
+                    <button type="button" className="prepare-property-section-head">
+                      Checkbox ▾
+                    </button>
+                    <div className="prepare-property-section-body">
+                      <label className="prepare-property-row">
+                        <span>Caption</span>
+                        <input
+                          type="text"
+                          value={selectedField.caption ?? ""}
+                          onChange={(e) => updateField(selectedField.id, { caption: e.target.value })}
+                          placeholder="Label next to checkbox"
+                        />
+                      </label>
+                      <label className="prepare-property-row prepare-property-check">
+                        <input
+                          type="checkbox"
+                          checked={selectedField.checked}
+                          onChange={(e) => updateField(selectedField.id, { checked: e.target.checked })}
+                        />
+                        <span>Default checked</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+                {selectedField.type === "Number" && (
+                  <div className="prepare-property-section prepare-property-section-expanded">
+                    <button type="button" className="prepare-property-section-head">
+                      Number ▾
+                    </button>
+                    <div className="prepare-property-section-body">
+                      <label className="prepare-property-row">
+                        <span>Min value</span>
+                        <input
+                          type="number"
+                          value={selectedField.minValue ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value === "" ? undefined : Number(e.target.value);
+                            updateField(selectedField.id, { minValue: Number.isFinite(v) ? v : undefined });
+                          }}
+                          placeholder="—"
+                        />
+                      </label>
+                      <label className="prepare-property-row">
+                        <span>Max value</span>
+                        <input
+                          type="number"
+                          value={selectedField.maxValue ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value === "" ? undefined : Number(e.target.value);
+                            updateField(selectedField.id, { maxValue: Number.isFinite(v) ? v : undefined });
+                          }}
+                          placeholder="—"
+                        />
+                      </label>
+                      <label className="prepare-property-row">
+                        <span>Decimal places</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={10}
+                          value={selectedField.decimalPlaces ?? 0}
+                          onChange={(e) => updateField(selectedField.id, { decimalPlaces: Math.max(0, Math.min(10, Number(e.target.value) || 0)) })}
+                        />
+                      </label>
+                      <label className="prepare-property-row">
+                        <span>Placeholder</span>
+                        <input
+                          type="text"
+                          value={selectedField.placeholder ?? ""}
+                          onChange={(e) => updateField(selectedField.id, { placeholder: e.target.value })}
+                          placeholder="e.g. 0"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                )}
+                {selectedField.type === "Note" && (
+                  <div className="prepare-property-section prepare-property-section-expanded">
+                    <button type="button" className="prepare-property-section-head">
+                      Note ▾
+                    </button>
+                    <div className="prepare-property-section-body">
+                      <p className="prepare-property-hint">Message for the recipient. This text is not written on the document.</p>
+                      <label className="prepare-property-row">
+                        <textarea
+                          value={selectedField.noteContent ?? ""}
+                          onChange={(e) => updateField(selectedField.id, { noteContent: e.target.value })}
+                          placeholder="Note for recipient"
+                          rows={4}
+                        />
+                      </label>
+                    </div>
+                  </div>
                 )}
                 {selectedField.type === "Text" && (
                   <div className="prepare-property-section prepare-property-section-expanded">
@@ -1646,6 +1864,17 @@ export default function DocumentDetailPage() {
                       Options ▾
                     </button>
                     <div className="prepare-property-section-body">
+                      {selectedField.type === "Radio" && (
+                        <label className="prepare-property-row">
+                          <span>Group name</span>
+                          <input
+                            type="text"
+                            value={selectedField.groupName ?? ""}
+                            onChange={(e) => updateField(selectedField.id, { groupName: e.target.value })}
+                            placeholder="Link radio buttons"
+                          />
+                        </label>
+                      )}
                       <p className="prepare-property-hint">Fill in the list of options.</p>
                       {(selectedField.options || []).map((opt, idx) => (
                         <div key={idx} className="prepare-property-option-row">
@@ -1683,7 +1912,7 @@ export default function DocumentDetailPage() {
                             }}
                             aria-label="Remove option"
                           >
-                            ✕
+                            <i className="lni lni-xmark" aria-hidden />
                           </button>
                         </div>
                       ))}
@@ -1731,7 +1960,7 @@ export default function DocumentDetailPage() {
                     Formatting ▾
                   </button>
                   <div className="prepare-property-section-body">
-                    {["Name", "Email", "Company", "Title", "Text"].includes(selectedField.type) ? (
+                    {["Name", "Email", "Company", "Title", "Text", "Number"].includes(selectedField.type) ? (
                       <>
                         <label className="prepare-property-row">
                           <span>Font</span>
@@ -1917,9 +2146,7 @@ export default function DocumentDetailPage() {
                   </div>
                 </div>
                 <div className="prepare-property-actions">
-                  <button type="button" className="prepare-btn secondary prepare-btn-block">
-                    SAVE AS CUSTOM FIELD
-                  </button>
+                 
                   <button
                     type="button"
                     className="prepare-btn prepare-btn-danger prepare-btn-block"
@@ -1991,7 +2218,10 @@ export default function DocumentDetailPage() {
                     <span className="prepare-property-label">Name format</span>
                     <select
                       value={selectedField.nameFormat ?? "Full Name"}
-                      onChange={(e) => updateField(selectedField.id, { nameFormat: e.target.value })}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        updateField(selectedField.id, { nameFormat: val, dataLabel: val });
+                      }}
                       aria-label="Name format"
                       className="prepare-property-select"
                     >
@@ -2009,7 +2239,7 @@ export default function DocumentDetailPage() {
                   />
                   <span>Required Field</span>
                 </label>
-                {["Company", "Title", "Text"].includes(selectedField.type) && (
+                {["Company", "Title", "Text", "Number"].includes(selectedField.type) && (
                   <label className="prepare-property-row prepare-property-check">
                     <input
                       type="checkbox"
@@ -2018,6 +2248,102 @@ export default function DocumentDetailPage() {
                     />
                     <span>Read Only</span>
                   </label>
+                )}
+                {selectedField.type === "Checkbox" && (
+                  <div className="prepare-property-section prepare-property-section-expanded">
+                    <button type="button" className="prepare-property-section-head">
+                      Checkbox ▾
+                    </button>
+                    <div className="prepare-property-section-body">
+                      <label className="prepare-property-row">
+                        <span>Caption</span>
+                        <input
+                          type="text"
+                          value={selectedField.caption ?? ""}
+                          onChange={(e) => updateField(selectedField.id, { caption: e.target.value })}
+                          placeholder="Label next to checkbox"
+                        />
+                      </label>
+                      <label className="prepare-property-row prepare-property-check">
+                        <input
+                          type="checkbox"
+                          checked={selectedField.checked}
+                          onChange={(e) => updateField(selectedField.id, { checked: e.target.checked })}
+                        />
+                        <span>Default checked</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+                {selectedField.type === "Number" && (
+                  <div className="prepare-property-section prepare-property-section-expanded">
+                    <button type="button" className="prepare-property-section-head">
+                      Number ▾
+                    </button>
+                    <div className="prepare-property-section-body">
+                      <label className="prepare-property-row">
+                        <span>Min value</span>
+                        <input
+                          type="number"
+                          value={selectedField.minValue ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value === "" ? undefined : Number(e.target.value);
+                            updateField(selectedField.id, { minValue: Number.isFinite(v) ? v : undefined });
+                          }}
+                          placeholder="—"
+                        />
+                      </label>
+                      <label className="prepare-property-row">
+                        <span>Max value</span>
+                        <input
+                          type="number"
+                          value={selectedField.maxValue ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value === "" ? undefined : Number(e.target.value);
+                            updateField(selectedField.id, { maxValue: Number.isFinite(v) ? v : undefined });
+                          }}
+                          placeholder="—"
+                        />
+                      </label>
+                      <label className="prepare-property-row">
+                        <span>Decimal places</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={10}
+                          value={selectedField.decimalPlaces ?? 0}
+                          onChange={(e) => updateField(selectedField.id, { decimalPlaces: Math.max(0, Math.min(10, Number(e.target.value) || 0)) })}
+                        />
+                      </label>
+                      <label className="prepare-property-row">
+                        <span>Placeholder</span>
+                        <input
+                          type="text"
+                          value={selectedField.placeholder ?? ""}
+                          onChange={(e) => updateField(selectedField.id, { placeholder: e.target.value })}
+                          placeholder="e.g. 0"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                )}
+                {selectedField.type === "Note" && (
+                  <div className="prepare-property-section prepare-property-section-expanded">
+                    <button type="button" className="prepare-property-section-head">
+                      Note ▾
+                    </button>
+                    <div className="prepare-property-section-body">
+                      <p className="prepare-property-hint">Message for the recipient. This text is not written on the document.</p>
+                      <label className="prepare-property-row">
+                        <textarea
+                          value={selectedField.noteContent ?? ""}
+                          onChange={(e) => updateField(selectedField.id, { noteContent: e.target.value })}
+                          placeholder="Note for recipient"
+                          rows={4}
+                        />
+                      </label>
+                    </div>
+                  </div>
                 )}
                 {selectedField.type === "Text" && (
                   <div className="prepare-property-section prepare-property-section-expanded">
@@ -2054,6 +2380,17 @@ export default function DocumentDetailPage() {
                       Options ▾
                     </button>
                     <div className="prepare-property-section-body">
+                      {selectedField.type === "Radio" && (
+                        <label className="prepare-property-row">
+                          <span>Group name</span>
+                          <input
+                            type="text"
+                            value={selectedField.groupName ?? ""}
+                            onChange={(e) => updateField(selectedField.id, { groupName: e.target.value })}
+                            placeholder="Link radio buttons"
+                          />
+                        </label>
+                      )}
                       <p className="prepare-property-hint">Fill in the list of options.</p>
                       {(selectedField.options || []).map((opt, idx) => (
                         <div key={idx} className="prepare-property-option-row">
@@ -2091,7 +2428,7 @@ export default function DocumentDetailPage() {
                             }}
                             aria-label="Remove option"
                           >
-                            ✕
+                            <i className="lni lni-xmark" aria-hidden />
                           </button>
                         </div>
                       ))}
@@ -2139,7 +2476,7 @@ export default function DocumentDetailPage() {
                     Formatting ▾
                   </button>
                   <div className="prepare-property-section-body">
-                    {["Name", "Email", "Company", "Title", "Text"].includes(selectedField.type) ? (
+                    {["Name", "Email", "Company", "Title", "Text", "Number"].includes(selectedField.type) ? (
                       <>
                         <label className="prepare-property-row">
                           <span>Font</span>
@@ -2325,9 +2662,7 @@ export default function DocumentDetailPage() {
                   </div>
                 </div>
                 <div className="prepare-property-actions">
-                  <button type="button" className="prepare-btn secondary prepare-btn-block">
-                    SAVE AS CUSTOM FIELD
-                  </button>
+                 
                   <button
                     type="button"
                     className="prepare-btn prepare-btn-danger prepare-btn-block"
@@ -2371,16 +2706,94 @@ export default function DocumentDetailPage() {
           <button type="button" className="prepare-btn secondary" onClick={handleBack}>
             Back
           </button>
-          <button
-            type="button"
-            className="prepare-btn primary"
-            onClick={handleSendClick}
-            disabled={sending || !signers.length}
-          >
-            {sending ? "Sending…" : "Send"}
-          </button>
+          {doc?.isTemplate ? (
+            <span className="prepare-footer-save-wrap">
+              {signersWithoutPlace().length > 0 && (
+                <span className="prepare-footer-save-hint" role="status">
+                  Place at least one field for each recipient who needs to sign ({signersWithoutPlace().length} remaining)
+                </span>
+              )}
+              <button
+                type="button"
+                className="prepare-btn primary"
+                onClick={handleSaveEdits}
+                disabled={savingFields || signersWithoutPlace().length > 0}
+                title={
+                  signersWithoutPlace().length > 0
+                    ? `Place at least one field for each recipient who needs to sign (${signersWithoutPlace().length} remaining)`
+                    : undefined
+                }
+              >
+                {savingFields ? "Saving…" : "Save edits"}
+              </button>
+            </span>
+          ) : isTemplateFlow ? (
+            <button
+              type="button"
+              className="prepare-btn primary"
+              onClick={openSaveAsTemplateModal}
+              disabled={savingTemplate || !signers.length}
+            >
+              {savingTemplate ? "Saving…" : "Save template"}
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="prepare-btn secondary"
+                onClick={openSaveAsTemplateModal}
+                disabled={savingTemplate || !signers.length}
+              >
+                Save as template
+              </button>
+              <button
+                type="button"
+                className="prepare-btn primary"
+                onClick={handleSendClick}
+                disabled={sending || !signers.length}
+              >
+                {sending ? "Sending…" : "Send"}
+              </button>
+            </>
+          )}
         </footer>
         </>
+        )}
+
+        {saveAsTemplateModalOpen && (
+          <div className="prepare-send-warning-backdrop" role="dialog" aria-modal="true" aria-labelledby="save-template-modal-title" onClick={closeSaveAsTemplateModal}>
+            <div className="prepare-send-warning-modal" onClick={(e) => e.stopPropagation()}>
+              <h2 id="save-template-modal-title" className="prepare-send-warning-title">Save as template</h2>
+              <p className="prepare-send-warning-text">
+                Enter a name for this template. The document will be saved as a reusable template.
+              </p>
+              <label className="adopt-modal-field" style={{ display: "block", marginBottom: "1rem" }}>
+                <span>Template label</span>
+                <input
+                  type="text"
+                  value={templateLabel}
+                  onChange={(e) => setTemplateLabel(e.target.value)}
+                  placeholder="e.g. Employment Agreement"
+                  autoFocus
+                  style={{ width: "100%", marginTop: "0.25rem" }}
+                />
+              </label>
+              {saveTemplateError && <p className="adopt-error">{saveTemplateError}</p>}
+              <div className="prepare-send-warning-actions" style={{ marginTop: "1rem" }}>
+                <button type="button" className="prepare-btn secondary" onClick={closeSaveAsTemplateModal} disabled={savingTemplate}>
+                  Back
+                </button>
+                <button
+                  type="button"
+                  className="prepare-btn primary"
+                  onClick={handleSaveAsTemplate}
+                  disabled={savingTemplate || !templateLabel.trim()}
+                >
+                  {savingTemplate ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {sendWarningRecipients != null && sendWarningRecipients.length > 0 && (
@@ -2479,7 +2892,7 @@ export default function DocumentDetailPage() {
           <div className="prepare-sent-screen" role="status">
             <div className="prepare-sent-content">
               <div className="prepare-sent-banner">
-                <span className="prepare-sent-check" aria-hidden>✓</span>
+                <span className="prepare-sent-check" aria-hidden><i className="lni lni-check" aria-hidden /></span>
                 Agreement sent
               </div>
               <h1 className="prepare-sent-heading">Keep track of your agreements</h1>
@@ -2507,3 +2920,5 @@ export default function DocumentDetailPage() {
     </TopNavLayout>
   );
 }
+
+export default DocumentDetailPage;

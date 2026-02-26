@@ -12,6 +12,7 @@ const { createSignRequest } = require('../services/signing.service');
 const { sendDocuSignStyleSignEmail } = require('../services/email.service');
 const { logEvent } = require('../services/audit.service');
 const storageService = require('../services/storage.service');
+const { applyVoidWatermark } = require('../services/pdfSign.service');
 
 const router = express.Router();
 
@@ -40,6 +41,7 @@ function parseBodyFields(body) {
   if (body.message != null) out.message = body.message;
   if (body.reminderFrequency != null) out.reminderFrequency = body.reminderFrequency;
   if (body.signingOrder != null) out.signingOrder = body.signingOrder === 'true' || body.signingOrder === true;
+  if (body.isTemplate != null) out.isTemplate = body.isTemplate === 'true' || body.isTemplate === true;
   return out;
 }
 
@@ -59,7 +61,7 @@ router.post('/', requireAuth, upload, async (req, res) => {
       return res.status(400).json({ error: 'Title is required' });
     }
 
-    const { recipients = [], subject = '', message = '', reminderFrequency = 'every_day', signingOrder = false } = parseBodyFields(req.body);
+    const { recipients = [], subject = '', message = '', reminderFrequency = 'every_day', signingOrder = false, isTemplate = false } = parseBodyFields(req.body);
 
     let pdfBuffer;
     if (uploadedFiles.length === 1) {
@@ -90,6 +92,7 @@ router.post('/', requireAuth, upload, async (req, res) => {
       message: String(message || ''),
       reminderFrequency: ['every_day', 'every_3_days', 'every_5_days', 'weekly', 'never'].includes(reminderFrequency) ? reminderFrequency : 'every_day',
       signingOrder: Boolean(signingOrder),
+      isTemplate: Boolean(isTemplate),
     });
 
     if (useStorage) {
@@ -158,7 +161,7 @@ router.get('/agreements', requireAuth, async (req, res) => {
       .lean();
     const signerDocIds = [...new Set(signReqsWhereIMe.map((sr) => sr.documentId.toString()))];
 
-    const baseQuery = includeDeleted ? { status: 'deleted' } : { status: { $ne: 'deleted' } };
+    const baseQuery = includeDeleted ? { status: 'deleted', isTemplate: { $ne: true } } : { status: { $ne: 'deleted' }, isTemplate: { $ne: true } };
     const orClauses = [{ ownerId: myId, ...baseQuery }];
     if (signerDocIds.length && !includeDeleted) orClauses.push({ _id: signerDocIds, ...baseQuery });
     const docs = await Document.find(orClauses.length > 1 ? { $or: orClauses } : orClauses[0])
@@ -191,6 +194,245 @@ router.get('/agreements', requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// List templates for current user
+router.get('/templates', requireAuth, async (req, res) => {
+  try {
+    const templates = await Document.find({
+      ownerId: req.user.id,
+      isTemplate: true,
+      status: { $ne: 'deleted' },
+    })
+      .sort({ updatedAt: -1 })
+      .lean();
+    res.json(templates);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create new document from template
+router.post('/from-template/:id', requireAuth, async (req, res) => {
+  try {
+    const templateId = req.params.id;
+    const template = await Document.findOne({ _id: templateId, ownerId: req.user.id });
+    if (!template) return res.status(404).json({ error: 'Template not found' });
+    if (!template.isTemplate) return res.status(400).json({ error: 'Document is not a template' });
+
+    const useStorage = storageService.isStorageConfigured();
+    const newDoc = await Document.create({
+      ownerId: req.user.id,
+      title: template.title + ' (Copy)',
+      originalKey: template.originalKey,
+      originalFilePath: template.originalFilePath,
+      status: 'draft',
+      recipients: template.recipients || [],
+      subject: template.subject || '',
+      message: template.message || '',
+      reminderFrequency: template.reminderFrequency || 'every_day',
+      signingOrder: template.signingOrder || false,
+      isTemplate: false,
+      page1RenderWidth: template.page1RenderWidth,
+      page1RenderHeight: template.page1RenderHeight,
+    });
+
+    if (useStorage && template.originalKey) {
+      const key = storageService.originalKey(newDoc._id.toString());
+      const buf = await storageService.download(template.originalKey);
+      if (buf) {
+        await storageService.upload(key, buf);
+        newDoc.originalKey = key;
+        await newDoc.save();
+      }
+    } else if (template.originalFilePath) {
+      const srcPath = path.join(uploadDir, template.originalFilePath);
+      const newPath = `${Date.now()}-${Math.round(Math.random() * 1e9)}.pdf`;
+      try {
+        await fs.copyFile(srcPath, path.join(uploadDir, newPath));
+        newDoc.originalFilePath = newPath;
+        newDoc.originalKey = undefined;
+        await newDoc.save();
+      } catch (copyErr) {
+        console.error('[documents] copy template file failed', copyErr);
+      }
+    }
+
+    const signers = (newDoc.recipients || []).filter((r) => r.role === 'signer');
+    for (const r of signers) {
+      try {
+        await createSignRequest({
+          documentId: newDoc._id.toString(),
+          ownerUser: { email: req.user.email },
+          signerEmail: r.email,
+          signerName: r.name,
+          signatureFields: [],
+          order: typeof r.order === 'number' ? r.order : 0,
+          skipEmail: true,
+          keepDraft: true,
+        });
+      } catch (err) {
+        console.error('[documents] createSignRequest from template failed', err);
+      }
+    }
+
+    res.status(201).json(newDoc);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Use template: create doc from template with provided recipients and send immediately
+router.post('/use-template/:id', requireAuth, async (req, res) => {
+  try {
+    const templateId = req.params.id;
+    const template = await Document.findOne({ _id: templateId, ownerId: req.user.id });
+    if (!template) return res.status(404).json({ error: 'Template not found' });
+    if (!template.isTemplate) return res.status(400).json({ error: 'Document is not a template' });
+
+    const recipients = Array.isArray(req.body.recipients) ? req.body.recipients : [];
+    const signerRecipients = recipients
+      .filter((r) => (r.role || 'signer') === 'signer' && r.name && r.email)
+      .map((r) => ({
+        name: String(r.name).trim(),
+        email: String(r.email).toLowerCase().trim(),
+        role: 'signer',
+        order: typeof r.order === 'number' ? r.order : 0,
+      }));
+    if (!signerRecipients.length) {
+      return res.status(400).json({ error: 'At least one signer recipient (name and email) is required.' });
+    }
+
+    const subject = req.body.subject != null ? String(req.body.subject) : template.subject || '';
+    const message = req.body.message != null ? String(req.body.message) : template.message || '';
+
+    const useStorage = storageService.isStorageConfigured();
+    const newDoc = await Document.create({
+      ownerId: req.user.id,
+      title: template.title.replace(/\s*\(Copy\)\s*$/i, '').trim() || template.title,
+      originalKey: undefined,
+      originalFilePath: useStorage ? undefined : `${Date.now()}-${Math.round(Math.random() * 1e9)}.pdf`,
+      status: 'draft',
+      recipients: recipients.map((r) => ({
+        name: String(r.name || '').trim(),
+        email: (r.email || '').toLowerCase().trim(),
+        role: ['signer', 'cc', 'approver', 'viewer'].includes(r.role) ? r.role : 'signer',
+        order: typeof r.order === 'number' ? r.order : 0,
+      })).filter((r) => r.name && r.email),
+      subject,
+      message,
+      reminderFrequency: template.reminderFrequency || 'every_day',
+      signingOrder: template.signingOrder || false,
+      isTemplate: false,
+      page1RenderWidth: template.page1RenderWidth,
+      page1RenderHeight: template.page1RenderHeight,
+    });
+
+    if (useStorage && template.originalKey) {
+      const key = storageService.originalKey(newDoc._id.toString());
+      const buf = await storageService.download(template.originalKey);
+      if (buf) {
+        await storageService.upload(key, buf);
+        newDoc.originalKey = key;
+        await newDoc.save();
+      }
+    } else if (template.originalFilePath) {
+      const srcPath = path.join(uploadDir, template.originalFilePath);
+      const newPath = `${Date.now()}-${Math.round(Math.random() * 1e9)}.pdf`;
+      try {
+        await fs.copyFile(srcPath, path.join(uploadDir, newPath));
+        newDoc.originalFilePath = newPath;
+        newDoc.originalKey = undefined;
+        await newDoc.save();
+      } catch (copyErr) {
+        console.error('[documents] copy template file for use-template failed', copyErr);
+        return res.status(500).json({ error: 'Failed to copy template file' });
+      }
+    }
+
+    const templateSignReqs = await SignRequest.find({ documentId: template._id })
+      .sort({ order: 1 })
+      .lean();
+    for (let i = 0; i < signerRecipients.length; i++) {
+      const r = signerRecipients[i];
+      const templateSr = templateSignReqs[i] || null;
+      const signatureFields = templateSr && Array.isArray(templateSr.signatureFields)
+        ? templateSr.signatureFields.map((f) => ({ ...f }))
+        : [];
+      try {
+        await createSignRequest({
+          documentId: newDoc._id.toString(),
+          ownerUser: { email: req.user.email },
+          signerEmail: r.email,
+          signerName: r.name,
+          signatureFields,
+          order: r.order || i,
+          skipEmail: true,
+          keepDraft: true,
+        });
+      } catch (err) {
+        console.error('[documents] createSignRequest in use-template failed', err);
+      }
+    }
+
+    const docForSend = await Document.findById(newDoc._id).lean();
+    let signReqs = await SignRequest.find({ documentId: newDoc._id }).lean();
+    if (!signReqs.length) {
+      return res.status(400).json({ error: 'No signers could be created. Please try again.' });
+    }
+
+    const senderName = req.user.name || req.user.email || 'Someone';
+    const senderEmail = req.user.email || '';
+    const documentTitle = docForSend.title || 'Document';
+
+    if (docForSend.signingOrder) {
+      signReqs = signReqs.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      const minOrder = Math.min(...signReqs.map((sr) => sr.order ?? 0));
+      signReqs = signReqs.filter((sr) => (sr.order ?? 0) === minOrder && !sr.emailSentAt);
+    }
+
+    const ownerEmail = (req.user.email || '').toLowerCase();
+    for (const sr of signReqs) {
+      const isOwnerSigner = (sr.signerEmail || '').toLowerCase() === ownerEmail;
+      if (!isOwnerSigner || !docForSend.signingOrder) {
+        try {
+          await sendDocuSignStyleSignEmail({
+            signerEmail: sr.signerEmail,
+            signerName: sr.signerName,
+            token: sr.signLinkToken,
+            documentTitle,
+            senderName,
+            senderEmail,
+          });
+        } catch (emailErr) {
+          console.error('[documents] use-template send failed for', sr.signerEmail, emailErr);
+          const userMessage = getEmailSendErrorMessage(emailErr, sr.signerEmail);
+          return res.status(400).json({ error: userMessage });
+        }
+      }
+      await SignRequest.findByIdAndUpdate(sr._id, { emailSentAt: new Date() });
+      await logEvent({
+        documentId: newDoc._id.toString(),
+        signRequestId: sr._id,
+        actorType: 'sender',
+        actorIdOrEmail: senderEmail,
+        eventType: 'sent_for_signature',
+        meta: { signerEmail: sr.signerEmail, signerName: sr.signerName },
+      });
+    }
+
+    const oneWeekFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await SignRequest.updateMany({ documentId: newDoc._id }, { $set: { expiresAt: oneWeekFromNow } });
+    await Document.findByIdAndUpdate(newDoc._id, { status: 'pending', sentAt: new Date() });
+
+    const finalDoc = await Document.findById(newDoc._id).lean();
+    res.status(201).json({ document: finalDoc, sentCount: signReqs.length });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.response?.data?.error || 'Internal server error' });
   }
 });
 
@@ -317,7 +559,7 @@ router.put('/:id/signing-fields', requireAuth, async (req, res) => {
       await doc.save();
     }
     const signReqs = await SignRequest.find({ documentId: doc._id });
-    const allowedTypes = ['signature', 'initial', 'stamp', 'date', 'name', 'email', 'company', 'title', 'text', 'number', 'checkbox', 'dropdown', 'radio'];
+    const allowedTypes = ['signature', 'initial', 'stamp', 'date', 'name', 'email', 'company', 'title', 'text', 'number', 'checkbox', 'dropdown', 'radio', 'note', 'approve', 'decline'];
     const normalizeType = (t) => {
       if (!t) return 'signature';
       const lower = String(t).toLowerCase();
@@ -369,6 +611,14 @@ router.put('/:id/signing-fields', requireAuth, async (req, res) => {
           if (f.characterLimit != null) fieldData.characterLimit = Math.min(10000, Math.max(1, Number(f.characterLimit) || 4000));
           if (f.hideWithAsterisks != null) fieldData.hideWithAsterisks = Boolean(f.hideWithAsterisks);
           if (f.fixedWidth != null) fieldData.fixedWidth = Boolean(f.fixedWidth);
+          if (f.caption != null) fieldData.caption = String(f.caption || '').slice(0, 500);
+          if (f.checked != null) fieldData.checked = Boolean(f.checked);
+          if (f.minValue != null && Number.isFinite(Number(f.minValue))) fieldData.minValue = Number(f.minValue);
+          if (f.maxValue != null && Number.isFinite(Number(f.maxValue))) fieldData.maxValue = Number(f.maxValue);
+          if (f.decimalPlaces != null) fieldData.decimalPlaces = Math.min(10, Math.max(0, Math.round(Number(f.decimalPlaces) || 0)));
+          if (f.placeholder != null) fieldData.placeholder = String(f.placeholder || '').slice(0, 200);
+          if (f.groupName != null) fieldData.groupName = String(f.groupName || '').slice(0, 100);
+          if (f.noteContent != null) fieldData.noteContent = String(f.noteContent || '').slice(0, 10000);
           return fieldData;
         });
       sr.signatureFields = forThisSigner;
@@ -527,6 +777,115 @@ router.post('/:id/resend', requireAuth, async (req, res) => {
   }
 });
 
+// Void document: apply VOID watermark to all pages and set status to voided
+router.patch('/:id/void', requireAuth, async (req, res) => {
+  try {
+    const doc = await Document.findOne({ _id: req.params.id, ownerId: req.user.id });
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    if (doc.status === 'voided') {
+      return res.status(400).json({ error: 'Document is already voided' });
+    }
+    if (doc.status === 'deleted') {
+      return res.status(400).json({ error: 'Cannot void a deleted document' });
+    }
+    if (doc.status === 'draft') {
+      return res.status(400).json({ error: 'Cannot void a draft document' });
+    }
+
+    const resultKey = await applyVoidWatermark(doc);
+    const update = { status: 'voided' };
+    if (resultKey) {
+      if (storageService.isStorageConfigured()) {
+        update.signedKey = resultKey;
+      } else {
+        update.signedFilePath = resultKey;
+      }
+    }
+    await Document.findByIdAndUpdate(doc._id, { $set: update });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[documents] void failed', err);
+    res.status(500).json({ error: err.message || 'Failed to void document' });
+  }
+});
+
+// Save document as template (creates a copy with given label)
+router.post('/:id/save-as-template', requireAuth, async (req, res) => {
+  try {
+    const sourceId = req.params.id;
+    const templateLabel = (req.body.templateLabel || req.body.title || '').trim();
+    if (!templateLabel) {
+      return res.status(400).json({ error: 'Template label is required' });
+    }
+
+    const source = await Document.findOne({ _id: sourceId, ownerId: req.user.id });
+    if (!source) return res.status(404).json({ error: 'Document not found' });
+    if (source.isTemplate) return res.status(400).json({ error: 'Document is already a template' });
+
+    const useStorage = storageService.isStorageConfigured();
+    const newDoc = await Document.create({
+      ownerId: req.user.id,
+      title: templateLabel,
+      originalKey: undefined,
+      originalFilePath: undefined,
+      status: 'draft',
+      recipients: source.recipients || [],
+      subject: source.subject || '',
+      message: source.message || '',
+      reminderFrequency: source.reminderFrequency || 'every_day',
+      signingOrder: source.signingOrder || false,
+      isTemplate: true,
+      page1RenderWidth: source.page1RenderWidth,
+      page1RenderHeight: source.page1RenderHeight,
+    });
+
+    if (useStorage && source.originalKey) {
+      const key = storageService.originalKey(newDoc._id.toString());
+      const buf = await storageService.download(source.originalKey);
+      if (buf) {
+        await storageService.upload(key, buf);
+        newDoc.originalKey = key;
+        await newDoc.save();
+      }
+    } else if (source.originalFilePath) {
+      const srcPath = path.join(uploadDir, source.originalFilePath);
+      const newPath = `${Date.now()}-${Math.round(Math.random() * 1e9)}.pdf`;
+      await fs.copyFile(srcPath, path.join(uploadDir, newPath));
+      newDoc.originalFilePath = newPath;
+      await newDoc.save();
+    }
+
+    const sourceSignReqs = await SignRequest.find({ documentId: source._id }).sort({ order: 1 }).lean();
+    const signers = (newDoc.recipients || []).filter((r) => r.role === 'signer');
+    for (let i = 0; i < signers.length; i++) {
+      const r = signers[i];
+      const srcSr = sourceSignReqs[i] || null;
+      const signatureFields = srcSr && Array.isArray(srcSr.signatureFields) ? srcSr.signatureFields.map((f) => ({ ...f })) : [];
+      try {
+        await createSignRequest({
+          documentId: newDoc._id.toString(),
+          ownerUser: { email: req.user.email },
+          signerEmail: r.email,
+          signerName: r.name,
+          signatureFields,
+          order: r.order ?? i,
+          skipEmail: true,
+          keepDraft: true,
+        });
+      } catch (err) {
+        console.error('[documents] createSignRequest in save-as-template failed', err);
+      }
+    }
+
+    res.status(201).json(newDoc);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.response?.data?.error || 'Failed to save as template' });
+  }
+});
+
 // Trash (soft delete) document
 router.patch('/:id/trash', requireAuth, async (req, res) => {
   try {
@@ -548,10 +907,11 @@ router.patch('/:id/trash', requireAuth, async (req, res) => {
 // Update basic metadata
 router.put('/:id', requireAuth, async (req, res) => {
   try {
-    const { title, status } = req.body;
+    const { title, status, isTemplate } = req.body;
     const update = {};
     if (title) update.title = title;
-    if (status) update.status = status;
+    if (status != null) update.status = status;
+    if (typeof isTemplate === 'boolean') update.isTemplate = isTemplate;
 
     const doc = await Document.findOneAndUpdate(
       { _id: req.params.id, ownerId: req.user.id },

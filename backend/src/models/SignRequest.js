@@ -13,7 +13,7 @@ const signatureFieldSchema = new mongoose.Schema(
     yPct: { type: Number },
     wPct: { type: Number },
     hPct: { type: Number },
-    type: { type: String, enum: ['signature', 'initial', 'text', 'date', 'name', 'email', 'stamp', 'company', 'title', 'number', 'checkbox', 'dropdown', 'radio'], default: 'signature' },
+    type: { type: String, enum: ['signature', 'initial', 'text', 'date', 'name', 'email', 'stamp', 'company', 'title', 'number', 'checkbox', 'dropdown', 'radio', 'note', 'approve', 'decline'], default: 'signature' },
     required: { type: Boolean, default: true },
     dataLabel: { type: String, default: '' },
     tooltip: { type: String, default: '' },
@@ -35,6 +35,19 @@ const signatureFieldSchema = new mongoose.Schema(
     characterLimit: { type: Number, default: undefined },
     hideWithAsterisks: { type: Boolean, default: false },
     fixedWidth: { type: Boolean, default: false },
+    /** Checkbox: label text next to checkbox (DocuSign caption) */
+    caption: { type: String, default: undefined },
+    /** Checkbox: default checked state */
+    checked: { type: Boolean, default: false },
+    /** Number: min value, max value, decimal places, placeholder */
+    minValue: { type: Number, default: undefined },
+    maxValue: { type: Number, default: undefined },
+    decimalPlaces: { type: Number, default: 0 },
+    placeholder: { type: String, default: undefined },
+    /** Radio: group name to link multiple radio buttons (DocuSign RadioGroup) */
+    groupName: { type: String, default: undefined },
+    /** Note: sender's message to recipient (not written on document) */
+    noteContent: { type: String, default: undefined },
   },
   { _id: false }
 );
@@ -55,6 +68,8 @@ const signRequestSchema = new mongoose.Schema(
     },
     signatureFields: [signatureFieldSchema],
     signedAt: { type: Date },
+    /** Set when recipient clicks Approve (DocuSign-style approve field); allows completion without signing. */
+    approvedAt: { type: Date },
     signerIp: { type: String },
     userAgent: { type: String },
     signatureData: { type: String }, // legacy: single signature applied to all fields

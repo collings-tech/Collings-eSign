@@ -537,7 +537,7 @@ button:disabled {
 .top-header {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 100;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1073,6 +1073,56 @@ body.top-sidebar-open .top-sidebar {
   border-bottom: 1px solid var(--color-border);
 }
 
+.agreements-empty-hint {
+  flex: 1;
+  margin: 0;
+  font-size: var(--font-size-small);
+  color: var(--color-text-secondary);
+}
+
+.agreements-inline-link {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.agreements-inline-link:hover {
+  color: var(--color-accent-hover);
+}
+
+/* Templates table: wider actions column, compact buttons */
+.templates-table .agreements-table-head,
+.templates-table .agreements-row {
+  grid-template-columns: 44px minmax(0, 2fr) minmax(0, 1.2fr) minmax(140px, 1.2fr) minmax(360px, auto);
+}
+.templates-table .agreements-col-last {
+  min-width: 0;
+}
+.templates-table .agreements-last {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.templates-table .agreements-actions-group {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+.templates-table .agreements-action {
+  min-width: 5rem;
+  width: auto;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.8125rem;
+}
+.templates-table .agreements-action-primary {
+  min-width: 4.5rem;
+}
+.templates-table .agreements-action-menu {
+  min-width: 2rem;
+  width: 2rem;
+  height: 2rem;
+}
+
 .agreements-search input {
   width: min(420px, 100%);
   border-radius: var(--radius);
@@ -1523,6 +1573,11 @@ body.top-sidebar-open .top-sidebar {
   color: #166534;
 }
 
+.status-voided {
+  background: #f3e8ff;
+  color: #6b21a8;
+}
+
 .status-deleted {
   background: var(--color-bg-nav);
   color: var(--color-text-muted);
@@ -1773,6 +1828,14 @@ body.top-sidebar-open .top-sidebar {
   font-size: 1rem;
   cursor: pointer;
   color: var(--color-text-secondary);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.lni {
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .prepare-icon-btn:hover {
@@ -2095,6 +2158,13 @@ body.top-sidebar-open .top-sidebar {
 .prepare-field-icon {
   font-size: 1rem;
   opacity: 0.85;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25em;
+}
+.prepare-field-icon i {
+  font-size: inherit;
 }
 
 .prepare-center {
@@ -2256,6 +2326,48 @@ body.top-sidebar-open .top-sidebar {
 .prepare-placed-field-icon {
   font-size: 1rem;
   flex-shrink: 0;
+}
+
+/* Note field: text-area style placeholder, content reflects tool input */
+.prepare-placed-field-note {
+  flex-direction: column;
+  align-items: stretch;
+  overflow: hidden;
+}
+/* Checkbox / Radio: compact – small square/circle + label inline */
+.prepare-placed-field-checkbox,
+.prepare-placed-field-radio {
+  padding: 0.15rem 0.35rem;
+  min-height: 0;
+}
+.prepare-placed-field-checkbox .prepare-placed-field-icon,
+.prepare-placed-field-radio .prepare-placed-field-icon {
+  font-size: 0.85rem;
+}
+
+/* Data input fields (Text, Number, Dropdown, etc.): rectangle – shorter height */
+.prepare-placed-field-data-rect {
+  padding: 0.2rem 0.4rem;
+  min-height: 0;
+}
+
+.prepare-placed-field-note .prepare-placed-field-icon {
+  flex-shrink: 0;
+  margin-bottom: 0.15rem;
+}
+.prepare-placed-field-note-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  color: #1e3a5f;
+}
+.prepare-placed-field-note-content.is-placeholder {
+  color: #64748b;
+  font-style: italic;
 }
 
 .prepare-placed-field-label {
@@ -2917,6 +3029,18 @@ body.top-sidebar-open .top-sidebar {
   padding: 0.75rem 1rem;
   background: var(--color-bg-card);
   border-top: 1px solid var(--color-border);
+}
+
+.prepare-footer-save-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
+.prepare-footer-save-hint {
+  font-size: 0.8rem;
+  color: var(--color-text-muted, #666);
 }
 
 .prepare-error {
@@ -4327,6 +4451,7 @@ body.top-sidebar-open .top-sidebar {
   border: 2px solid #7c3aed;
   border-radius: 4px;
   box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
+  padding: 0.15rem 0.4rem;
   padding: 0;
   display: flex;
   align-items: stretch;
@@ -4382,17 +4507,90 @@ body.top-sidebar-open .top-sidebar {
   color: #4b5563;
 }
 
+.signing-field-checkbox-block {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border: 2px solid #7c3aed;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
+  padding: 0.1rem 0.3rem;
+  min-height: 0;
+}
+
+.signing-field-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  cursor: pointer;
+  margin: 0;
+}
+
+.signing-field-checkbox-input {
+  flex-shrink: 0;
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: #7c3aed;
+  cursor: pointer;
+}
+
+.signing-field-checkbox-caption {
+  font-size: 0.8rem;
+  color: #1f2937;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.signing-field-radio-block {
+  display: flex;
+  align-items: center;
+  background: #ffffff;
+  border: 2px solid #7c3aed;
+  border-radius: 4px;
+  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
+  padding: 0.15rem 0.35rem;
+}
+
+.signing-field-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.signing-field-radio-option {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: #1f2937;
+}
+
+.signing-field-radio-option input[type="radio"] {
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: #7c3aed;
+  cursor: pointer;
+}
+
 .signing-field-dropdown-block {
   background: #ffffff;
   border: 2px solid #7c3aed;
   border-radius: 4px;
   box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
+  padding: 0.15rem 0.4rem;
 }
 
 .signing-field-dropdown-select {
   width: 100%;
   height: 100%;
-  min-height: 24px;
+  min-height: 20px;
   padding: 0.25rem 0.5rem;
   border: none;
   background: transparent;
@@ -4438,6 +4636,98 @@ body.top-sidebar-open .top-sidebar {
 
 .signing-field-label { font-size: 0.95rem; }
 .signing-field-icon { font-size: 1.05rem; opacity: 0.95; }
+
+/* Note: sender message (not on document) */
+.signing-field-note-block {
+  display: flex;
+  align-items: flex-start;
+  padding: 0.35rem 0.5rem;
+  background: rgba(254, 249, 195, 0.95);
+  border: 1px solid #eab308;
+  border-radius: 6px;
+  overflow: auto;
+}
+.signing-field-note-content {
+  font-size: 0.85rem;
+  color: #1f2937;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Approve / Decline (DocuSign-style) */
+.signing-field-approve-block,
+.signing-field-decline-block {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.25rem;
+}
+.signing-field-approve-btn {
+  width: 100%;
+  height: 100%;
+  min-height: 32px;
+  border: none;
+  border-radius: 6px;
+  background: #16a34a;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+.signing-field-approve-btn:hover:not(:disabled) {
+  background: #15803d;
+}
+.signing-field-approve-btn:disabled {
+  opacity: 0.85;
+  cursor: default;
+}
+.signing-field-decline-btn {
+  min-height: 32px;
+  padding: 0.4rem 0.75rem;
+  border: 2px solid #dc2626;
+  border-radius: 6px;
+  background: #fff;
+  color: #dc2626;
+  font-weight: 600;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.signing-field-decline-btn:hover:not(:disabled) {
+  background: #dc2626;
+  color: #fff;
+}
+.signing-field-decline-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* Voided document view */
+.signing-voided-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1.5rem;
+  gap: 1rem;
+}
+.signing-voided-banner {
+  padding: 1rem 1.5rem;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  color: #b91c1c;
+  font-weight: 600;
+  text-align: center;
+  margin-top: 50px;
+}
+.signing-decline-modal .signing-decline-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  margin-top: 1rem;
+}
 
 /* When signed: transparent so PDF shows through, border at original aspect ratio, signature can overflow */
 .signing-field-block.signed {
@@ -4978,6 +5268,185 @@ body.top-sidebar-open .top-sidebar {
   display: flex;
   gap: 0.75rem;
   justify-content: flex-end;
+}
+
+/* Use Template modal: recipients + message (image 2 style) */
+.use-template-modal { max-width: 560px; }
+.use-template-section { margin-bottom: 1.25rem; }
+.use-template-section-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin: 0 0 0.75rem;
+}
+.use-template-loading {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+.use-template-recipient-row {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr auto;
+  gap: 0.75rem;
+  align-items: end;
+}
+.use-template-role-badge {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  padding: 0.25rem 0.5rem;
+}
+.use-template-error { margin-bottom: 0.75rem; }
+.use-template-success { color: var(--color-success); margin-bottom: 0.75rem; }
+
+/* Template view page – read-only template details */
+.template-view-shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+.template-view-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+.template-view-back {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  font-size: 0.95rem;
+  cursor: pointer;
+  padding: 0.35rem 0.35rem;
+}
+.template-view-back:hover {
+  color: var(--color-bg-card);
+}
+.template-view-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+.template-view-body {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: 2rem;
+  min-height: 400px;
+}
+@media (max-width: 768px) {
+  .template-view-body {
+    grid-template-columns: 1fr;
+  }
+}
+.template-view-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+.template-view-section {
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius);
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+}
+.template-view-section-title {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.template-view-muted {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+}
+.template-view-recipients,
+.template-view-fields {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.template-view-recipient,
+.template-view-field {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: 0.875rem;
+}
+.template-view-recipient:last-child,
+.template-view-field:last-child {
+  border-bottom: none;
+}
+.template-view-recipient-name {
+  display: block;
+  font-weight: 500;
+}
+.template-view-recipient-email {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+.template-view-recipient-role {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-top: 0.15rem;
+}
+.template-view-field-type {
+  font-weight: 500;
+}
+.template-view-field-assignee {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+.template-view-field-page {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+.template-view-document {
+  min-width: 0;
+}
+.template-view-pdf-wrap {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--color-bg-subtle);
+  min-height: 500px;
+}
+.template-view-pdf-wrap .pdf-viewer {
+  min-height: 500px;
+}
+
+.template-view-pdf-main .pdf-main-view {
+  width: 100%;
+  min-width: 280px;
+}
+.template-view-pdf-main .pdf-main-view .pdf-main-view-page {
+  position: relative;
+}
+.template-view-pdf-main .pdf-main-view .pdf-page-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+.template-view-placed-field {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.4rem;
+  border-radius: 4px;
+  border: 2px solid;
+  font-size: 0.8rem;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.template-view-placed-field-sign {
+  border-width: 2px;
 }
 
 /* Resend modal: list of recipients (name + email) */
@@ -5874,6 +6343,8 @@ body.top-sidebar-open .top-sidebar {
   font-size: 1rem;
   flex-shrink: 0;
   opacity: 0.7;
+  display: flex;
+  justify-content: center;
 }
 
 .new-agreement-recipient-actions {

@@ -30,6 +30,10 @@ export default function SigningPage() {
   const [pageRects, setPageRects] = useState([]);
   const [linkExpired, setLinkExpired] = useState(false);
   const [localFieldOverrides, setLocalFieldOverrides] = useState({});
+  const [declineConfirmOpen, setDeclineConfirmOpen] = useState(false);
+  const [voidAlertDismissed, setVoidAlertDismissed] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [declining, setDeclining] = useState(false);
   /** Local cache of field values so we don't refetch on every blur (avoids PDF reload/flicker when typing). */
   const [savedFieldValues, setSavedFieldValues] = useState({});
   /** Measured widths for text fields so they grow with content (keyed by field id). */
@@ -276,6 +280,35 @@ export default function SigningPage() {
     }
   }, [token, info?.signRequest?.fieldValues]);
 
+  const handleApprove = async () => {
+    setApproving(true);
+    try {
+      await apiClient.post(`/signing/${token}/approve`);
+      await fetchInfo();
+    } catch (err) {
+      setCompleteError(err.response?.data?.error || "Could not record approval");
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const handleDeclineConfirm = async () => {
+    setDeclineConfirmOpen(false);
+    setDeclining(true);
+    setCompleteError("");
+    try {
+      await apiClient.post(`/signing/${token}/decline`);
+      await fetchInfo();
+      setFileUrl(null);
+      const urlRes = await apiClient.get(`/signing/${token}/file-url`);
+      if (urlRes.data?.url) setFileUrl(urlRes.data.url);
+    } catch (err) {
+      setCompleteError(err.response?.data?.error || "Could not decline");
+    } finally {
+      setDeclining(false);
+    }
+  };
+
   const handleComplete = async () => {
     setCompleteError("");
     setCompleting(true);
@@ -361,6 +394,7 @@ export default function SigningPage() {
   }
 
   const { document: doc, signRequest } = info;
+  const isVoided = doc.status === "voided";
   const isSigned = signRequest.status === "signed";
   // Normalize to array so fields always show (avoids "sometimes not" when API returns null/undefined or empty)
   const rawFields = Array.isArray(signRequest.signatureFields) ? signRequest.signatureFields : [];
@@ -401,10 +435,14 @@ export default function SigningPage() {
       color,
     };
   };
+  const hasApproveField = fields.some((f) => (f.type || "").toLowerCase() === "approve");
+  const approvedAt = signRequest.approvedAt;
   const allSigFieldsSigned = sigFields.length === 0 || sigFields.every((f) => fieldSignatureData[f.id]) || (signatureData && Object.keys(fieldSignatureData).length === 0);
   const requiredDataFields = fields.filter((f) => {
     if (f.required === false) return false;
     const t = (f.type || "signature").toLowerCase();
+    if (t === "note" || t === "approve" || t === "decline") return false;
+    if (t === "checkbox") return false; // checkbox (checked or unchecked) never blocks Complete
     return t !== "signature" && t !== "initial";
   });
   const allRequiredDataFieldsFilled = requiredDataFields.length === 0 || requiredDataFields.every((f) => {
@@ -412,9 +450,112 @@ export default function SigningPage() {
     const t = (f.type || "signature").toLowerCase();
     let value = (localFieldOverrides[key] ?? savedFieldValues[key] ?? fieldValues[f.id] ?? fieldValues[key] ?? "").toString().trim();
     if (!value && t === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
-    return value.length > 0;
+    return value.length > 0; // radio must have a value (user chose 1)
   });
-  const canComplete = allSigFieldsSigned && allRequiredDataFieldsFilled;
+  const canComplete = (allSigFieldsSigned || (hasApproveField && approvedAt)) && allRequiredDataFieldsFilled;
+
+  if (isVoided) {
+    return (
+      <div className="signing-shell review-complete">
+        <header className="signing-review-header">
+          <div className="signing-review-header-left">
+            <span className="signing-review-brand">
+              <img src={collingsLogo} alt="Collings" className="signing-review-logo" />
+              <span className="signing-review-brand-esign">eSign</span>
+            </span>
+            <span className="signing-review-title">Document voided</span>
+          </div>
+          <div className="signing-review-header-right">
+            <span className="signing-envelope-id">Envelope ID: {doc.id}</span>
+            <span className="signing-complete-btn signing-signed-label" style={{ cursor: "default", pointerEvents: "none" }} tabIndex={-1}>
+              Voided
+            </span>
+          </div>
+        </header>
+        <div className="signing-review-body">
+          <main className="signing-review-main">
+            <div className="signing-voided-banner" role="alert">
+              This document has been voided and is no longer valid.
+            </div>
+            <div ref={containerRef} className="signing-doc-canvas signing-doc-canvas-prepare-style">
+            <div className="prepare-pdf-zoom-wrap">
+              <div
+                ref={pdfInnerRef}
+                className="prepare-pdf-inner"
+                style={{
+                  transform: `scale(${zoom / 100})`,
+                  transformOrigin: "0 0",
+                }}
+              >
+                <div className="prepare-pdf-wrap">
+                  {fileUrl ? (
+                    <PdfMainView fileUrl={fileUrl} />
+                  ) : fileUrlLoading ? (
+                    <div className="signing-loading" role="status" aria-live="polite">Loading PDF…</div>
+                  ) : fileUrlError ? (
+                    <div className="signing-pdf-error" style={{ padding: "2rem", textAlign: "center" }}>
+                      <p className="signing-pdf-error-text">{fileUrlError}</p>
+                      <button type="button" className="signing-pdf-error-retry" onClick={fetchFileUrl}>
+                        Retry
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+            </div>
+            <div className="signing-zoom-fixed" aria-label="Zoom controls">
+            <button
+              type="button"
+              className="signing-zoom-btn signing-zoom-in"
+              onClick={() => setZoom((z) => Math.min(200, z + 25))}
+              disabled={zoom >= 200}
+              aria-label="Zoom in"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /><path d="M11 8v6" /><path d="M8 11h6" /></svg>
+            </button>
+            <span className="signing-zoom-value" aria-live="polite">{zoom}%</span>
+            <button
+              type="button"
+              className="signing-zoom-btn signing-zoom-out"
+              onClick={() => setZoom((z) => Math.max(100, z - 25))}
+              disabled={zoom <= 100}
+              aria-label="Zoom out"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /><path d="M8 11h6" /></svg>
+            </button>
+            </div>
+          </main>
+        </div>
+
+        <footer className="signing-review-footer">
+          <span className="signing-footer-brand">Powered by Collings eSign</span>
+          <div className="signing-footer-center">
+            <select className="signing-footer-lang" aria-label="Language" defaultValue="en">
+              <option value="en">English (US)</option>
+            </select>
+            <a href="#terms">Terms of Use</a>
+            <a href="#privacy">Privacy</a>
+          </div>
+          <span className="signing-footer-copy">© {new Date().getFullYear()} Collings eSign. All rights reserved.</span>
+        </footer>
+
+        {!voidAlertDismissed && (
+          <div className="signing-completed-overlay" role="dialog" aria-modal="true" aria-labelledby="void-alert-title" onClick={() => setVoidAlertDismissed(true)}>
+            <div className="signing-completed-message" onClick={(e) => e.stopPropagation()}>
+              <h2 id="void-alert-title" className="signing-completed-title">Document is void</h2>
+              <p className="signing-completed-text">
+                The document is already void. Contact the sender for clarification.
+              </p>
+              <button type="button" className="signing-completed-dismiss" onClick={() => setVoidAlertDismissed(true)}>
+                OK
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
 
   const scale = zoom / 100;
   const hasSize = contentSize.width > 0 && contentSize.height > 0;
@@ -515,12 +656,82 @@ export default function SigningPage() {
                           const wPct = f.wPct != null ? f.wPct : ((Number(f.width ?? 110) / rw) * 100);
                           const hPct = f.hPct != null ? f.hPct : ((Number(f.height ?? 55) / rh) * 100);
 
+                      if (typeLower === "note") {
+                        const noteText = (f.noteContent ?? "").trim();
+                        if (!noteText) return null;
+                        return (
+                          <div
+                            key={f.id || `${f.page}-${f.x}-${f.y}`}
+                            className="signing-field-block signing-field-note-block"
+                            style={{
+                              position: "absolute",
+                              left: `${xPct}%`,
+                              top: `${yPct}%`,
+                              width: `${wPct}%`,
+                              height: `${hPct}%`,
+                            }}
+                          >
+                            <div className="signing-field-note-content">{noteText}</div>
+                          </div>
+                        );
+                      }
+                      if (typeLower === "approve") {
+                        return (
+                          <div
+                            key={f.id || `${f.page}-${f.x}-${f.y}`}
+                            className="signing-field-block signing-field-approve-block"
+                            style={{
+                              position: "absolute",
+                              left: `${xPct}%`,
+                              top: `${yPct}%`,
+                              width: `${wPct}%`,
+                              height: `${hPct}%`,
+                            }}
+                          >
+                            <button
+                              type="button"
+                              className="signing-field-approve-btn"
+                              onClick={handleApprove}
+                              disabled={approving || !!approvedAt}
+                              aria-label="Approve"
+                            >
+                              {approvedAt ? "Approved" : (approving ? "…" : "Approve")}
+                            </button>
+                          </div>
+                        );
+                      }
+                      if (typeLower === "decline") {
+                        return (
+                          <div
+                            key={f.id || `${f.page}-${f.x}-${f.y}`}
+                            className="signing-field-block signing-field-decline-block"
+                            style={{
+                              position: "absolute",
+                              left: `${xPct}%`,
+                              top: `${yPct}%`,
+                              width: `${wPct}%`,
+                              height: `${hPct}%`,
+                            }}
+                          >
+                            <button
+                              type="button"
+                              className="signing-field-decline-btn"
+                              onClick={() => setDeclineConfirmOpen(true)}
+                              disabled={declining}
+                              aria-label="Decline"
+                            >
+                              {declining ? "…" : "Decline"}
+                            </button>
+                          </div>
+                        );
+                      }
+
                       if (isTextField) {
                         const fieldKey = getFieldKey(f);
                         const isReadOnly = f.readOnly === true;
                         const rawValue = localFieldOverrides[fieldKey] ?? savedFieldValues[fieldKey] ?? fieldValues[f.id] ?? fieldValues[fieldKey];
                         const value = rawValue ?? (typeLower === "text" && (f.addText ?? "").trim() ? f.addText.trim() : "");
-                        const label = typeLower === "date" ? "Date signed" : typeLower.charAt(0).toUpperCase() + typeLower.slice(1);
+                        const label = typeLower === "date" ? "Date signed" : typeLower === "name" ? (f.nameFormat ?? "Full Name") : typeLower.charAt(0).toUpperCase() + typeLower.slice(1);
                         const effectiveW = (textFieldWidths[f.id] && rw > 0) ? `${Math.max(wPct, (textFieldWidths[f.id] / rw) * 100)}%` : `${wPct}%`;
                         const textFormatStyle = getTextFieldFormatStyle(f);
                         return (
@@ -561,6 +772,90 @@ export default function SigningPage() {
                         );
                       }
 
+                      if (typeLower === "checkbox") {
+                        const fieldKey = getFieldKey(f);
+                        const rawValue = localFieldOverrides[fieldKey] ?? savedFieldValues[fieldKey] ?? fieldValues[f.id] ?? fieldValues[fieldKey];
+                        const defaultVal = f.checked === true ? "Yes" : "";
+                        const valueStr = (rawValue ?? defaultVal).toString().trim();
+                        const isChecked = valueStr === "Yes" || valueStr === "true";
+                        const caption = (f.caption ?? "").trim() || "Checkbox";
+                        return (
+                          <div
+                            key={f.id || `${f.page}-${f.x}-${f.y}`}
+                            className="signing-field-block signing-field-checkbox-block"
+                            style={{
+                              position: "absolute",
+                              left: `${xPct}%`,
+                              top: `${yPct}%`,
+                              width: `${wPct}%`,
+                              height: `${hPct}%`,
+                            }}
+                          >
+                            <label className="signing-field-checkbox-label">
+                              <input
+                                type="checkbox"
+                                className="signing-field-checkbox-input"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  const v = e.target.checked ? "Yes" : "";
+                                  setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: v }));
+                                  saveFieldValue(fieldKey, v);
+                                }}
+                                aria-label={caption}
+                              />
+                              <span className="signing-field-checkbox-caption">{caption}</span>
+                            </label>
+                          </div>
+                        );
+                      }
+                      if (typeLower === "radio") {
+                        const opts = Array.isArray(f.options) ? f.options : [];
+                        const optionLabels = opts.map((o) => (o.label ?? o.value ?? "").trim()).filter(Boolean);
+                        const defaultVal = (f.defaultOption != null && f.defaultOption !== "" && optionLabels.includes(f.defaultOption))
+                          ? f.defaultOption
+                          : "";
+                        const fieldKey = getFieldKey(f);
+                        const groupName = (f.groupName ?? f.id ?? fieldKey).toString().trim() || fieldKey;
+                        const value = localFieldOverrides[fieldKey] ?? savedFieldValues[fieldKey] ?? fieldValues[f.id] ?? fieldValues[fieldKey] ?? defaultVal;
+                        const valueStr = (typeof value === "string" ? value : String(value ?? "")).trim();
+                        const selectedVal = valueStr && optionLabels.includes(valueStr) ? valueStr : "";
+                        return (
+                          <div
+                            key={f.id || `${f.page}-${f.x}-${f.y}`}
+                            className="signing-field-block signing-field-radio-block"
+                            style={{
+                              position: "absolute",
+                              left: `${xPct}%`,
+                              top: `${yPct}%`,
+                              width: `${wPct}%`,
+                              height: `${hPct}%`,
+                            }}
+                          >
+                            <div className="signing-field-radio-group" role="radiogroup" aria-label={f.dataLabel || "Radio"}>
+                              {opts.map((o, idx) => {
+                                const displayText = (o.label ?? o.value ?? "").trim() || "";
+                                if (!displayText) return null;
+                                const isSelected = selectedVal === displayText;
+                                return (
+                                  <label key={idx} className="signing-field-radio-option">
+                                    <input
+                                      type="radio"
+                                      name={groupName}
+                                      checked={isSelected}
+                                      onChange={() => {
+                                        setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: displayText }));
+                                        saveFieldValue(fieldKey, displayText);
+                                      }}
+                                      aria-label={displayText}
+                                    />
+                                    <span>{displayText}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      }
                       if (typeLower === "dropdown") {
                         const opts = Array.isArray(f.options) ? f.options : [];
                         const optionLabels = opts.map((o) => (o.label ?? o.value ?? "").trim()).filter(Boolean);
@@ -651,7 +946,7 @@ export default function SigningPage() {
                               aria-label={isInitialField ? "Click to add initials" : "Click to sign"}
                             >
                               <span className="signing-field-label">{isInitialField ? "Initial" : "Sign"}</span>
-                              <span className="signing-field-icon" aria-hidden>✒</span>
+                              <span className="signing-field-icon" aria-hidden><i className="lni lni-pen-to-square" aria-hidden /></span>
                             </button>
                           )}
                         </div>
@@ -816,6 +1111,25 @@ onClick={() => setZoom((z) => Math.max(100, z - 25))}
             <button type="button" className="signing-completed-dismiss" onClick={() => setShowSigningCompletedMessage(false)}>
               {(fileUrl || completedFileUrl) ? "Close" : "OK"}
             </button>
+          </div>
+        </div>
+      )}
+
+      {declineConfirmOpen && (
+        <div className="signing-completed-overlay" role="dialog" aria-modal="true" aria-labelledby="signing-decline-title" onClick={() => setDeclineConfirmOpen(false)}>
+          <div className="signing-completed-message signing-decline-modal" onClick={(e) => e.stopPropagation()}>
+            <h2 id="signing-decline-title" className="signing-completed-title">Decline document?</h2>
+            <p className="signing-completed-text">
+              Are you sure you want to decline? After declining, the document will be voided and a VOID watermark will be applied. This action cannot be undone.
+            </p>
+            <div className="signing-decline-actions">
+              <button type="button" className="signing-completed-dismiss" onClick={() => setDeclineConfirmOpen(false)}>
+                Cancel
+              </button>
+              <button type="button" className="signing-field-decline-btn" onClick={handleDeclineConfirm} disabled={declining}>
+                {declining ? "…" : "Yes, decline"}
+              </button>
+            </div>
           </div>
         </div>
       )}

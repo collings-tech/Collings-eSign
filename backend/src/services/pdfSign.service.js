@@ -133,7 +133,7 @@ async function embedSignatureInPdf(doc, signRequest) {
     const t = String(f.type || "signature").toLowerCase();
     return t === "signature" || t === "initial";
   });
-  const textFieldTypes = ["name", "email", "company", "title", "text", "number", "stamp", "date", "dropdown"];
+  const textFieldTypes = ["name", "email", "company", "title", "text", "number", "stamp", "date", "dropdown", "checkbox", "radio"];
   const hasSigFields = sigFields.length > 0;
   if (hasSigFields && !hasPerField && !hasLegacy) {
     throw new Error("No signature data to embed");
@@ -404,6 +404,7 @@ async function embedSignatureInPdf(doc, signRequest) {
     let value = fieldValues[fieldKey] ?? fieldValues[f.id];
     if (value == null || String(value).trim() === "") {
       if (f.readOnly && typeLower === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
+      else if (typeLower === "checkbox") value = f.checked === true ? "Yes" : "";
       else continue;
     }
 
@@ -417,6 +418,30 @@ async function embedSignatureInPdf(doc, signRequest) {
     const { x, yPdf, w: innerW, h: innerH } = box;
     const innerX = x;
     const innerY = yPdf;
+
+    if (typeLower === "checkbox") {
+      const isChecked = String(value).trim() === "Yes" || String(value).trim() === "true";
+      if (!isChecked) continue; // only draw when checkbox is ticked
+      const caption = (f.caption ?? "").trim() || "";
+      const displayText = caption ? "X " + caption : "X"; // use "X" (Helvetica-safe) instead of Unicode checkmark
+      let fontSizePt = Math.min(12, Math.max(8, innerH * 0.6));
+      const textColor = getTextColor(f.fontColor);
+      const textX = innerX + 1;
+      const textY = innerY + Math.min(3, innerH * 0.15);
+      try {
+        const textFont = await getTextFont(pdfDoc, f);
+        page.drawText(displayText, {
+          x: textX,
+          y: textY,
+          size: fontSizePt,
+          font: textFont,
+          color: textColor,
+        });
+      } catch (err) {
+        console.error("[pdfSign] Failed to draw checkbox field:", err.message);
+      }
+      continue;
+    }
 
     const text = String(value).trim();
     let fontSizePt = f.fontSize != null && f.fontSize > 0 ? Math.min(72, Math.max(6, Number(f.fontSize))) : Math.min(12, Math.max(8, innerH * 0.7));
@@ -463,7 +488,74 @@ async function embedSignatureInPdf(doc, signRequest) {
   return outFilename;
 }
 
+/**
+ * Apply a large "VOID" watermark to every page of the document (DocuSign-style when declined).
+ * Saves to signedKey/signedFilePath and returns the key or filename.
+ * @param {Object} doc - Document with originalKey, signedKey, originalFilePath, signedFilePath
+ * @returns {Promise<string>} Storage key or local filename
+ */
+async function applyVoidWatermark(doc) {
+  let pdfBytes;
+  const useStorage = doc.originalKey && storageService.isStorageConfigured();
+  if (useStorage) {
+    const sourceKey = doc.signedKey || doc.originalKey;
+    pdfBytes = await storageService.download(sourceKey);
+  } else {
+    const sourcePath = path.join(uploadDir, doc.signedFilePath || doc.originalFilePath);
+    pdfBytes = await fs.readFile(sourcePath);
+  }
+
+  const pdfDoc = await PDFDocument.load(pdfBytes);
+  const pages = pdfDoc.getPages();
+  const helveticaBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const voidText = "VOID";
+  const voidColor = rgb(0.35, 0.35, 0.35); // darker gray for high visibility
+
+  for (const page of pages) {
+    const pageWidth = page.getWidth();
+    const pageHeight = page.getHeight();
+    // Large diagonal watermark: ~22% of page diagonal for prominence
+    const diagonal = Math.sqrt(pageWidth * pageWidth + pageHeight * pageHeight);
+    const fontSize = Math.max(100, Math.min(220, diagonal * 0.22));
+    const textWidth = helveticaBold.widthOfTextAtSize(voidText, fontSize);
+    const textCenterY = fontSize * 0.66; // vertical center of caps (Helvetica)
+    const centerX = pageWidth / 2;
+    const centerY = pageHeight / 2;
+    // pdf-lib rotates around (x,y). To have the text center end up at (centerX, centerY) after -45° rotation:
+    // apply inverse of rotation to compute required (x,y)
+    const cos = Math.cos((-45 * Math.PI) / 180);
+    const sin = Math.sin((-45 * Math.PI) / 180);
+    const dx = textWidth / 2;
+    const dy = textCenterY;
+    const x = centerX - (dx * cos - dy * sin);
+    const y = centerY - (dx * sin + dy * cos);
+    page.drawText(voidText, {
+      x,
+      y,
+      size: fontSize,
+      font: helveticaBold,
+      color: voidColor,
+      opacity: 0.85,
+      rotate: { type: "degrees", angle: -45 },
+    });
+  }
+
+  const outBytes = await pdfDoc.save();
+  if (useStorage) {
+    const signedKeyPath = storageService.signedKey(doc._id.toString());
+    await storageService.upload(signedKeyPath, Buffer.from(outBytes));
+    console.log("[pdfSign] Saved voided PDF to storage:", signedKeyPath);
+    return signedKeyPath;
+  }
+  const outFilename = `voided-${doc._id.toString()}-${Date.now()}.pdf`;
+  const outPath = path.join(uploadDir, outFilename);
+  await fs.writeFile(outPath, outBytes);
+  console.log("[pdfSign] Saved voided PDF to local:", outFilename);
+  return outFilename;
+}
+
 module.exports = {
   embedSignatureInPdf,
   getSignatureImageBuffer,
+  applyVoidWatermark,
 };

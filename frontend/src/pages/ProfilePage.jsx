@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import Cropper from "react-easy-crop";
 import { useAuth } from "../auth/AuthContext.jsx";
 import { apiClient, getProfileImageUrl } from "../api/client";
+import TopNavLayout from "../components/TopNavLayout.jsx";
 
 /** Create a circular cropped image blob from image URL and crop area (from react-easy-crop). */
 async function getCroppedImgCircle(imageSrc, pixelCrop) {
@@ -318,21 +319,9 @@ export default function ProfilePage() {
   const profileImageUrl = getProfileImageUrl(user?.profileImageUrl);
 
   return (
-    <div className="profile-page">
-      <header className="profile-header">
-        <div className="profile-header-inner">
-          <span className="profile-logo">Collings eSign</span>
-          <div className="profile-header-user" aria-hidden="true">
-            {profileImageUrl ? (
-              <img src={profileImageUrl} alt="" className="profile-header-user-img" />
-            ) : (
-              user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || "?"
-            )}
-          </div>
-        </div>
-      </header>
-
-      <div className="profile-body">
+    <TopNavLayout>
+      <div className="profile-page">
+        <div className="profile-body">
         <nav className="profile-sidebar" aria-label="Profile settings">
           <ul className="profile-nav-list">
             {PROFILE_NAV.map((item) => (
@@ -601,7 +590,7 @@ export default function ProfilePage() {
                   Update Profile Photo
                 </h2>
                 <button type="button" className="profile-photo-modal-close" onClick={closePhotoModal} aria-label="Close">
-                  ×
+                  <i className="lni lni-xmark" aria-hidden />
                 </button>
               </div>
               {photoPreview ? (
@@ -746,21 +735,22 @@ export default function ProfilePage() {
           document.body
         )}
 
-      <footer className="profile-footer">
-        <div className="profile-footer-inner">
-          <span className="profile-footer-powered">Powered by Collings</span>
-          {/* <nav className="profile-footer-links" aria-label="Footer links">
-            <a href="#contact">Contact Us</a>
-            <a href="#terms">Terms of Use</a>
-            <a href="#privacy">Privacy</a>
-            <a href="#ip">Intellectual Property</a>
-            <a href="#trust">Trust</a>
-          </nav> */}
-          <p className="profile-footer-copy">
-            Copyright © {new Date().getFullYear()} Collings, Inc. All rights reserved.
-          </p>
-        </div>
-      </footer>
-    </div>
+        <footer className="profile-footer">
+          <div className="profile-footer-inner">
+            <span className="profile-footer-powered">Powered by Collings</span>
+            {/* <nav className="profile-footer-links" aria-label="Footer links">
+              <a href="#contact">Contact Us</a>
+              <a href="#terms">Terms of Use</a>
+              <a href="#privacy">Privacy</a>
+              <a href="#ip">Intellectual Property</a>
+              <a href="#trust">Trust</a>
+            </nav> */}
+            <p className="profile-footer-copy">
+              Copyright © {new Date().getFullYear()} Collings, Inc. All rights reserved.
+            </p>
+          </div>
+        </footer>
+      </div>
+    </TopNavLayout>
   );
 }

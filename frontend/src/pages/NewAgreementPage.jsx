@@ -35,7 +35,7 @@ function DocThumbnail({ id, file, onView, onRemove, pageCount, onPageCount }) {
         title={`Delete ${file.name}`}
         aria-label={`Delete ${file.name}`}
       >
-        ×
+        <i className="lni lni-xmark" aria-hidden />
       </button>
       <div className="new-agreement-doc-thumb-wrap" onClick={() => onView(file)} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && onView(file)}>
         <div className="new-agreement-doc-thumb">
@@ -388,7 +388,8 @@ export default function NewAgreementPage() {
             existingEmails.add(email);
           }
         }
-        navigate(`/documents/${editDocumentId}`, { state: { openPrepare: true } });
+        const isTemplateFlow = location.state?.isTemplateFlow === true;
+        navigate(`/documents/${editDocumentId}`, { state: { openPrepare: true, ...(isTemplateFlow ? { isTemplateFlow: true } : {}) } });
       } catch (err) {
         console.error(err);
         setError(err.response?.data?.error || "Failed to add recipients");
@@ -428,7 +429,8 @@ export default function NewAgreementPage() {
       const res = await apiClient.post("/documents", form, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      navigate(`/documents/${res.data._id}`);
+      const isTemplateFlow = location.state?.isTemplateFlow === true;
+      navigate(`/documents/${res.data._id}`, { state: isTemplateFlow ? { isTemplateFlow: true } : undefined });
     } catch (err) {
       console.error(err);
       setError(err.response?.data?.error || "Failed to create agreement");
@@ -437,7 +439,7 @@ export default function NewAgreementPage() {
     }
   };
 
-  const handleClose = () => navigate("/agreements");
+  const handleClose = () => navigate(location.state?.isTemplateFlow ? "/templates" : "/agreements");
 
   return (
     <TopNavLayout>
@@ -449,16 +451,16 @@ export default function NewAgreementPage() {
             onClick={handleClose}
             aria-label="Close"
           >
-            ✕
+            <i className="lni lni-xmark" aria-hidden />
           </button>
           <h1 className="new-agreement-title">
             {loadingExisting
-              ? "Loading…"
-              : existingDocument
-                ? `Complete with Collings eSign: ${existingDocument.title}${files.length > 0 ? `, ${files.map(({ file }) => file.name).join(", ")}` : ""}`
-                : files.length > 0
-                  ? `Complete with Collings eSign: ${files.map(({ file }) => file.name).join(", ")}`
-                  : "Upload a Document and Add Envelope Recipients"}
+                ? "Loading…"
+                : existingDocument
+                  ? `Complete with Collings eSign: ${existingDocument.title}${files.length > 0 ? `, ${files.map(({ file }) => file.name).join(", ")}` : ""}`
+                  : files.length > 0
+                    ? `Complete with Collings eSign: ${files.map(({ file }) => file.name).join(", ")}`
+                    : "Upload a Document and Add Envelope Recipients"}
           </h1>
           <div className="new-agreement-header-actions">
             
@@ -562,7 +564,7 @@ export default function NewAgreementPage() {
                         }}
                       />
                       <span>I'm the only signer</span>
-                      <span className="new-agreement-info-icon" title="You will be the only person who needs to sign. No other recipients; no email will be sent when you send.">ⓘ</span>
+                      <span className="new-agreement-info-icon" title="You will be the only person who needs to sign. No other recipients; no email will be sent when you send." aria-hidden><i className="lni lni-question-mark-circle" aria-hidden /></span>
                     </label>
                     {!onlySigner && (
                       <>
@@ -614,7 +616,7 @@ export default function NewAgreementPage() {
                               <label className="new-agreement-field-label">
                                 <span>Name *</span>
                                 <span className="new-agreement-field-with-icon">
-                                  <span className="new-agreement-person-icon" aria-hidden>👤</span>
+                                  <i className="lni lni-user-4 new-agreement-person-icon" aria-hidden />
                                   <input
                                     type="text"
                                     placeholder="Name"
@@ -651,15 +653,18 @@ export default function NewAgreementPage() {
                             <div className="new-agreement-field-with-suggest">
                               <label className="new-agreement-field-label">
                                 <span>Email *</span>
-                                <input
-                                  type="email"
-                                  placeholder="Email"
-                                  value={r.email}
-                                  onChange={(e) => updateRecipient(r.id, "email", e.target.value)}
-                                  onFocus={() => openSuggestion(r.id, "email")}
-                                  onBlur={() => {}}
-                                  autoComplete="off"
-                                />
+                                <span className="new-agreement-field-with-icon">
+                                  <i className="lni lni-envelope-1 new-agreement-person-icon" aria-hidden />
+                                  <input
+                                    type="email"
+                                    placeholder="Email"
+                                    value={r.email}
+                                    onChange={(e) => updateRecipient(r.id, "email", e.target.value)}
+                                    onFocus={() => openSuggestion(r.id, "email")}
+                                    onBlur={() => {}}
+                                    autoComplete="off"
+                                  />
+                                </span>
                               </label>
                               {suggestionOpen?.recipientId === r.id && suggestionOpen?.field === "email" && (() => {
                                 const list = filteredPastRecipients(r.id, "email", r.email);
@@ -686,7 +691,7 @@ export default function NewAgreementPage() {
                           </div>
                           <div className="new-agreement-recipient-actions">
                             <label className="new-agreement-role-dropdown-wrap">
-                              <span className="new-agreement-role-icon" aria-hidden>✎</span>
+                              <i className="lni lni-pencil-1 new-agreement-role-icon" aria-hidden />
                               <select
                                 value={r.role === "viewer" ? "viewer" : "signer"}
                                 onChange={(e) => updateRecipient(r.id, "role", e.target.value)}
@@ -712,7 +717,7 @@ export default function NewAgreementPage() {
                               aria-label="Remove recipient"
                               disabled={recipients.length <2}
                             >
-                              🗑
+                              <i className="lni lni-trash-3" aria-hidden />
                             </button>
                           </div>
                           {duplicate && (
@@ -727,7 +732,7 @@ export default function NewAgreementPage() {
 
                     {!recipientInfoDismissed && (
                       <div className="new-agreement-recipient-info">
-                        <span className="new-agreement-info-icon" aria-hidden>ⓘ</span>
+                        <span className="new-agreement-info-icon" aria-hidden><i className="lni lni-question-mark-circle" aria-hidden /></span>
                         <p>
                           Fields are not automatically included in the document when new signers are added. Add new fields in the next step.
                         </p>
@@ -737,7 +742,7 @@ export default function NewAgreementPage() {
                           onClick={() => setRecipientInfoDismissed(true)}
                           aria-label="Dismiss"
                         >
-                          ×
+                          <i className="lni lni-xmark" aria-hidden />
                         </button>
                       </div>
                     )}
@@ -748,7 +753,7 @@ export default function NewAgreementPage() {
                         className="new-agreement-add-recipient-btn"
                         onClick={addRecipient}
                       >
-                        <span className="new-agreement-add-person-icon" aria-hidden>👤</span>
+                        <i className="lni lni-user-4 new-agreement-add-person-icon" aria-hidden />
                         Add Recipient
                         <span aria-hidden>▼</span>
                       </button>
@@ -842,7 +847,7 @@ export default function NewAgreementPage() {
                   onClick={closePreview}
                   aria-label="Close"
                 >
-                  ×
+                  <i className="lni lni-xmark" aria-hidden />
                 </button>
               </div>
               <div className="new-agreement-preview-body">
