@@ -68,7 +68,7 @@ export default function PdfThumbnails({
                   />
                 </div>
                 <div className="prepare-thumbnail-actions">
-                  <span className="prepare-thumb-page-num">Page {pageNum}</span>
+                  <span className="prepare-thumb-page-num">Page&nbsp;{pageNum}</span>
                   <button
                     type="button"
                     className="prepare-thumb-icon"

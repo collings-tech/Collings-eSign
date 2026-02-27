@@ -617,6 +617,7 @@ router.put('/:id/signing-fields', requireAuth, async (req, res) => {
           if (f.maxValue != null && Number.isFinite(Number(f.maxValue))) fieldData.maxValue = Number(f.maxValue);
           if (f.decimalPlaces != null) fieldData.decimalPlaces = Math.min(10, Math.max(0, Math.round(Number(f.decimalPlaces) || 0)));
           if (f.placeholder != null) fieldData.placeholder = String(f.placeholder || '').slice(0, 200);
+          if (f.defaultValue != null) fieldData.defaultValue = String(f.defaultValue || '').slice(0, 1000);
           if (f.groupName != null) fieldData.groupName = String(f.groupName || '').slice(0, 100);
           if (f.noteContent != null) fieldData.noteContent = String(f.noteContent || '').slice(0, 10000);
           return fieldData;
@@ -653,7 +654,7 @@ router.post('/:id/send', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'Document not found' });
     }
 
-    let signReqs = await SignRequest.find({ documentId: doc._id }).lean();
+    let signReqs = await SignRequest.find({ documentId: doc._id });
     if (!signReqs.length) {
       return res.status(400).json({ error: 'No recipients to send to. Add signers for this document first.' });
     }
@@ -661,6 +662,27 @@ router.post('/:id/send', requireAuth, async (req, res) => {
     const senderName = req.user.name || req.user.email || 'Someone';
     const senderEmail = req.user.email || '';
     const documentTitle = doc.title || 'Document';
+
+    // Initialize fieldValues with defaultValue for each field that has one
+    for (const sr of signReqs) {
+      let needsUpdate = false;
+      const currentFieldValues = sr.fieldValues || {};
+      
+      for (const field of sr.signatureFields || []) {
+        const fieldKey = field.id || `field-${field.page}-${field.x}-${field.y}-${field.type}`;
+        if (field.defaultValue && !currentFieldValues[fieldKey]) {
+          currentFieldValues[fieldKey] = String(field.defaultValue).trim();
+          needsUpdate = true;
+        }
+      }
+      
+      if (needsUpdate) {
+        await SignRequest.findByIdAndUpdate(sr._id, { fieldValues: currentFieldValues });
+        sr.fieldValues = currentFieldValues;
+      }
+    }
+
+    signReqs = signReqs.map(sr => sr.toObject ? sr.toObject() : sr);
 
     if (doc.signingOrder) {
       signReqs = signReqs.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));

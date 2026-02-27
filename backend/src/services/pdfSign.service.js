@@ -232,7 +232,8 @@ async function embedSignatureInPdf(doc, signRequest) {
     const black = rgb(0, 0, 0);
     const signedById = signRequest._id ? String(signRequest._id).replace(/-/g, "").slice(-16) : "";
 
-    const labelH = Math.min(5, innerH * 0.15);
+    const showSignedByLabel = innerH >= 45;
+    const labelH = showSignedByLabel ? Math.min(5, innerH * 0.15) : 0;
     const idH = Math.min(5, innerH * 0.15);
     const sigH = Math.max(innerH * 0.55, innerH - labelH - idH - 8);
     const labelY = innerY + innerH - labelH - SIG_TEXT_MARGIN_V;
@@ -326,16 +327,18 @@ async function embedSignatureInPdf(doc, signRequest) {
       }
     }
 
-    try {
-      page.drawText("Signed by:", {
-        x: innerX + 7,
-        y: labelY-2,
-        size: labelH+2,
-        font: helvetica,
-        color: black,
-      });
-    } catch (err) {
-      console.error("[pdfSign] Failed to draw Signed by:", err.message);
+    if (showSignedByLabel) {
+      try {
+        page.drawText("Signed by:", {
+          x: innerX + 7,
+          y: labelY-2,
+          size: labelH+2,
+          font: helvetica,
+          color: black,
+        });
+      } catch (err) {
+        console.error("[pdfSign] Failed to draw Signed by:", err.message);
+      }
     }
 
     if (signedById) {

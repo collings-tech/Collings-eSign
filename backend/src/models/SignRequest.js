@@ -44,6 +44,8 @@ const signatureFieldSchema = new mongoose.Schema(
     maxValue: { type: Number, default: undefined },
     decimalPlaces: { type: Number, default: 0 },
     placeholder: { type: String, default: undefined },
+    /** Default value for Name, Email, Company, Title, Text, Number fields */
+    defaultValue: { type: String, default: undefined },
     /** Radio: group name to link multiple radio buttons (DocuSign RadioGroup) */
     groupName: { type: String, default: undefined },
     /** Note: sender's message to recipient (not written on document) */

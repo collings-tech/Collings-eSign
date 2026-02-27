@@ -11,6 +11,7 @@ import { pdfjs } from "react-pdf";
 import PdfViewer from "../components/PdfViewer.jsx";
 import PdfMainView from "../components/PdfMainView.jsx";
 import PdfThumbnails from "../components/PdfThumbnails.jsx";
+import DatePicker from "../components/DatePicker.jsx";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
@@ -245,6 +246,7 @@ function DocumentDetailPage() {
   const [rightPanelPopupOpen, setRightPanelPopupOpen] = useState(false); // mobile: Pages/Properties as popup
   const [documentFileKey, setDocumentFileKey] = useState(0);
   const [documentFileUrl, setDocumentFileUrl] = useState(null);
+  const [editingFieldId, setEditingFieldId] = useState(null); // ID of field being edited inline
   const dragStartRef = useRef({ fieldX: 0, fieldY: 0, clientX: 0, clientY: 0 });
   const resizeStartRef = useRef({ x: 0, y: 0, w: 0, h: 0, clientX: 0, clientY: 0 });
   const dragTargetRef = useRef(null);
@@ -452,25 +454,42 @@ function DocumentDetailPage() {
       newField = { ...newField, options: [], defaultOption: "" };
     }
     if (type === "Name") {
-      newField = { ...newField, nameFormat: "Full Name", dataLabel: "Full Name", ...textFormatting };
+      newField = { ...newField, nameFormat: "Full Name", dataLabel: "Full Name", defaultValue: "", ...textFormatting };
     }
     if (TEXT_FORMATTING_FIELDS.includes(type)) {
       newField = { ...newField, readOnly: false, ...textFormatting };
     }
+    if (type === "Email") {
+      newField = { ...newField, defaultValue: "" };
+    }
+    if (type === "Company") {
+      newField = { ...newField, defaultValue: "" };
+    }
+    if (type === "Title") {
+      newField = { ...newField, defaultValue: "" };
+    }
     if (type === "Text") {
-      newField = { ...newField, addText: "", characterLimit: 4000, hideWithAsterisks: false, fixedWidth: false };
+      newField = { ...newField, addText: "", characterLimit: 4000, hideWithAsterisks: false, fixedWidth: false, defaultValue: "" };
     }
     if (type === "Checkbox") {
       newField = { ...newField, caption: "", checked: false };
     }
     if (type === "Number") {
-      newField = { ...newField, readOnly: false, minValue: undefined, maxValue: undefined, decimalPlaces: 0, placeholder: "", ...textFormatting };
+      newField = { ...newField, readOnly: false, minValue: undefined, maxValue: undefined, decimalPlaces: 0, placeholder: "", defaultValue: "", ...textFormatting };
     }
     if (type === "Radio") {
       newField = { ...newField, groupName: "" };
     }
     if (type === "Note") {
       newField = { ...newField, noteContent: "" };
+    }
+    if (type === "Date Signed") {
+      const today = new Date();
+      const day = String(today.getDate()).padStart(2, '0');
+      const month = String(today.getMonth() + 1).padStart(2, '0');
+      const year = today.getFullYear();
+      const australianDate = `${day}/${month}/${year}`;
+      newField = { ...newField, defaultValue: australianDate };
     }
     setPlacedFields((prev) => [...prev, newField]);
     setSelectedFieldId(newField.id);
@@ -584,21 +603,26 @@ function DocumentDetailPage() {
 
   /** DocuSign-style: place field on document click when one is carried by cursor (center at click). Uses percent coords. */
   const handleDocumentPlaceClick = useCallback((e) => {
-    if (!pendingFieldType || e.button !== 0) return;
+    if (e.button !== 0) return;
     if (e.target.closest?.(".prepare-placed-field")) return;
-    const coords = clientToPercentCoords(e.clientX, e.clientY);
-    if (!coords) return;
-    e.preventDefault();
-    e.stopPropagation();
-    addField(pendingFieldType, {
-      page: coords.page,
-      xPct: Math.max(0, coords.xPct - pendingWPct / 2),
-      yPct: Math.max(0, coords.yPct - pendingHPct / 2),
-      wPct: pendingWPct,
-      hPct: pendingHPct,
-    });
-    setPendingFieldType(null);
-    setCursorOverlayPos(null);
+    
+    if (pendingFieldType) {
+      const coords = clientToPercentCoords(e.clientX, e.clientY);
+      if (!coords) return;
+      e.preventDefault();
+      e.stopPropagation();
+      addField(pendingFieldType, {
+        page: coords.page,
+        xPct: Math.max(0, coords.xPct - pendingWPct / 2),
+        yPct: Math.max(0, coords.yPct - pendingHPct / 2),
+        wPct: pendingWPct,
+        hPct: pendingHPct,
+      });
+      setPendingFieldType(null);
+      setCursorOverlayPos(null);
+    } else {
+      setSelectedFieldId(null);
+    }
   }, [pendingFieldType, addField, clientToPercentCoords, pendingWPct, pendingHPct]);
 
   const handleFieldPointerDown = useCallback((e, field) => {
@@ -830,7 +854,7 @@ function DocumentDetailPage() {
       base.defaultOption = f.defaultOption ?? "";
     }
     if (f.type === "Name" && f.nameFormat) base.nameFormat = f.nameFormat;
-    if (["Name", "Email", "Company", "Title", "Text"].includes(f.type)) {
+    if (["Name", "Email", "Company", "Title", "Text", "Date Signed"].includes(f.type)) {
       if (f.readOnly != null) base.readOnly = f.readOnly;
       if (f.fontFamily != null) base.fontFamily = f.fontFamily;
       if (f.fontSize != null) base.fontSize = f.fontSize;
@@ -838,6 +862,7 @@ function DocumentDetailPage() {
       if (f.italic != null) base.italic = f.italic;
       if (f.underline != null) base.underline = f.underline;
       if (f.fontColor != null) base.fontColor = f.fontColor;
+      if (f.defaultValue != null) base.defaultValue = f.defaultValue;
     }
     if (f.type === "Text") {
       if (f.addText != null) base.addText = f.addText;
@@ -855,6 +880,7 @@ function DocumentDetailPage() {
       if (f.maxValue != null) base.maxValue = f.maxValue;
       if (f.decimalPlaces != null) base.decimalPlaces = f.decimalPlaces;
       if (f.placeholder != null) base.placeholder = f.placeholder;
+      if (f.defaultValue != null) base.defaultValue = f.defaultValue;
       if (f.fontFamily != null) base.fontFamily = f.fontFamily;
       if (f.fontSize != null) base.fontSize = f.fontSize;
       if (f.bold != null) base.bold = f.bold;
@@ -1520,18 +1546,20 @@ function DocumentDetailPage() {
             <div ref={docCanvasRef} className="prepare-doc-canvas">
               <div
                 className="prepare-pdf-zoom-wrap"
+                onPointerDown={(e) => {
+                  if (!e.target.closest(".prepare-placed-field") && !pendingFieldType) {
+                    setSelectedFieldId(null);
+                  }
+                }}
               >
                 <div
                   className="prepare-pdf-inner"
-                  style={{
-                    transform: `scale(${scale})`,
-                    transformOrigin: "0 0",
-                  }}
                 >
                   <div className="prepare-pdf-wrap">
                     {fileUrl ? (
                       <PdfMainView
                         fileUrl={fileUrl}
+                        fixedPageWidth={Math.round(800 * scale)}
                         pageRotations={pageRotations}
                         currentPage={currentPage}
                         onPageCount={setPdfPageCount}
@@ -1564,12 +1592,14 @@ function DocumentDetailPage() {
                                 const isSignatureType = f.type === "Signature" || f.type === "Initial";
                                 const isNoteField = f.type === "Note";
                                 const isCheckboxField = f.type === "Checkbox";
+                                const isDataInputField = ["Name", "Email", "Company", "Title", "Text", "Number"].includes(f.type);
                                 const isSelected = selectedFieldId === f.id;
-                                const showHandles = isSelected && (isSignatureType || isNoteField);
+                                const showHandles = isSelected;
                                 const xPct = f.xPct != null ? f.xPct : 8;
                                 const yPct = f.yPct != null ? f.yPct : 10;
                                 const wPct = f.wPct != null ? f.wPct : 14;
                                 const hPct = f.hPct != null ? f.hPct : 6;
+                                const dynamicFontSize = `${Math.max(0.5, Math.min(1.2, hPct * 0.15))}rem`;
                                 return (
                                   <div
                                     key={f.id}
@@ -1586,7 +1616,22 @@ function DocumentDetailPage() {
                                       borderColor: color.border,
                                       backgroundColor: color.bg,
                                     }}
+                                    title={isDataInputField ? (f.type === "Date Signed" ? "Click to select date" : "Double-click to enter default value") : undefined}
                                     onPointerDown={(e) => handleFieldPointerDown(e, f)}
+                                    onClick={(e) => {
+                                      if (f.type === "Date Signed" && editingFieldId !== f.id) {
+                                        e.stopPropagation();
+                                        setEditingFieldId(f.id);
+                                        setSelectedFieldId(f.id);
+                                      }
+                                    }}
+                                    onDoubleClick={(e) => {
+                                      if (["Name", "Email", "Company", "Title", "Text", "Number"].includes(f.type)) {
+                                        e.stopPropagation();
+                                        setEditingFieldId(f.id);
+                                        setSelectedFieldId(f.id);
+                                      }
+                                    }}
                                     onKeyDown={(e) => {
                                       if (e.key === "Enter" || e.key === " ") {
                                         e.preventDefault();
@@ -1603,9 +1648,45 @@ function DocumentDetailPage() {
                                       <span className="prepare-placed-field-label">
                                         {(f.caption ?? "").trim() || "Checkbox"}
                                       </span>
+                                    ) : f.type === "Date Signed" && editingFieldId === f.id ? (
+                                      <DatePicker
+                                        value={f.defaultValue ?? ""}
+                                        onChange={(newDate) => updateField(f.id, { defaultValue: newDate })}
+                                        onClose={() => setEditingFieldId(null)}
+                                        autoFocus={true}
+                                        fontSize={dynamicFontSize}
+                                      />
+                                    ) : ["Name", "Email", "Company", "Title", "Text", "Number"].includes(f.type) && editingFieldId === f.id ? (
+                                      <input
+                                        type="text"
+                                        className="prepare-placed-field-inline-input"
+                                        style={{ fontSize: dynamicFontSize }}
+                                        value={f.defaultValue ?? ""}
+                                        onChange={(e) => updateField(f.id, { defaultValue: e.target.value })}
+                                        onBlur={() => setEditingFieldId(null)}
+                                        onKeyDown={(e) => {
+                                          if (e.key === "Enter" || e.key === "Escape") {
+                                            e.preventDefault();
+                                            setEditingFieldId(null);
+                                          }
+                                          e.stopPropagation();
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        placeholder={f.type === "Name" ? (f.nameFormat ?? "Full Name") : f.type}
+                                        autoFocus
+                                      />
                                     ) : f.type === "Name" ? (
-                                      <span className="prepare-placed-field-label">
-                                        {f.nameFormat ?? "Full Name"}
+                                      <span className="prepare-placed-field-label" style={{ fontSize: dynamicFontSize }}>
+                                        {(f.defaultValue ?? "").trim() || (f.nameFormat ?? "Full Name")}
+                                      </span>
+                                    ) : ["Email", "Company", "Title", "Text", "Number"].includes(f.type) ? (
+                                      <span className="prepare-placed-field-label" style={{ fontSize: dynamicFontSize }}>
+                                        {(f.defaultValue ?? "").trim() || f.type}
+                                      </span>
+                                    ) : f.type === "Date Signed" ? (
+                                      <span className="prepare-placed-field-label" style={{ whiteSpace: "normal", fontSize: dynamicFontSize }}>
+                                        {(f.defaultValue ?? "").trim() || "DD/MM/YYYY"}
                                       </span>
                                     ) : (
                                       <span className="prepare-placed-field-label">
@@ -1698,22 +1779,44 @@ function DocumentDetailPage() {
                   </div>
                 )}
                 {selectedField.type === "Name" && (
-                  <div className="prepare-property-row prepare-property-recipient">
-                    <span className="prepare-property-label">Name format</span>
-                    <select
-                      value={selectedField.nameFormat ?? "Full Name"}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        updateField(selectedField.id, { nameFormat: val, dataLabel: val });
-                      }}
-                      aria-label="Name format"
-                      className="prepare-property-select"
-                    >
-                      <option value="Full Name">Full Name</option>
-                      <option value="First Name">First Name</option>
-                      <option value="Last Name">Last Name</option>
-                    </select>
-                  </div>
+                  <>
+                    <div className="prepare-property-row prepare-property-recipient">
+                      <span className="prepare-property-label">Name format</span>
+                      <select
+                        value={selectedField.nameFormat ?? "Full Name"}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          updateField(selectedField.id, { nameFormat: val, dataLabel: val });
+                        }}
+                        aria-label="Name format"
+                        className="prepare-property-select"
+                      >
+                        <option value="Full Name">Full Name</option>
+                        <option value="First Name">First Name</option>
+                        <option value="Last Name">Last Name</option>
+                      </select>
+                    </div>
+                    <label className="prepare-property-row">
+                      <span>Default Value</span>
+                      <input
+                        type="text"
+                        value={selectedField.defaultValue ?? ""}
+                        onChange={(e) => updateField(selectedField.id, { defaultValue: e.target.value })}
+                        placeholder="Pre-fill with value"
+                      />
+                    </label>
+                  </>
+                )}
+                {["Email", "Company", "Title"].includes(selectedField.type) && (
+                  <label className="prepare-property-row">
+                    <span>Default Value</span>
+                    <input
+                      type="text"
+                      value={selectedField.defaultValue ?? ""}
+                      onChange={(e) => updateField(selectedField.id, { defaultValue: e.target.value })}
+                      placeholder="Pre-fill with value"
+                    />
+                  </label>
                 )}
                 <label className="prepare-property-row prepare-property-check">
                   <input
@@ -1765,6 +1868,15 @@ function DocumentDetailPage() {
                       Number ▾
                     </button>
                     <div className="prepare-property-section-body">
+                      <label className="prepare-property-row">
+                        <span>Default Value</span>
+                        <input
+                          type="text"
+                          value={selectedField.defaultValue ?? ""}
+                          onChange={(e) => updateField(selectedField.id, { defaultValue: e.target.value })}
+                          placeholder="Pre-fill with value"
+                        />
+                      </label>
                       <label className="prepare-property-row">
                         <span>Min value</span>
                         <input
@@ -1832,9 +1944,18 @@ function DocumentDetailPage() {
                 {selectedField.type === "Text" && (
                   <div className="prepare-property-section prepare-property-section-expanded">
                     <button type="button" className="prepare-property-section-head">
-                      Add Text ▾
+                      Text Field ▾
                     </button>
                     <div className="prepare-property-section-body">
+                      <label className="prepare-property-row">
+                        <span>Default Value</span>
+                        <input
+                          type="text"
+                          value={selectedField.defaultValue ?? ""}
+                          onChange={(e) => updateField(selectedField.id, { defaultValue: e.target.value })}
+                          placeholder="Pre-fill with value"
+                        />
+                      </label>
                       <label className="prepare-property-row">
                         <textarea
                           value={selectedField.addText ?? ""}
@@ -2214,22 +2335,44 @@ function DocumentDetailPage() {
                   </div>
                 )}
                 {selectedField.type === "Name" && (
-                  <div className="prepare-property-row prepare-property-recipient">
-                    <span className="prepare-property-label">Name format</span>
-                    <select
-                      value={selectedField.nameFormat ?? "Full Name"}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        updateField(selectedField.id, { nameFormat: val, dataLabel: val });
-                      }}
-                      aria-label="Name format"
-                      className="prepare-property-select"
-                    >
-                      <option value="Full Name">Full Name</option>
-                      <option value="First Name">First Name</option>
-                      <option value="Last Name">Last Name</option>
-                    </select>
-                  </div>
+                  <>
+                    <div className="prepare-property-row prepare-property-recipient">
+                      <span className="prepare-property-label">Name format</span>
+                      <select
+                        value={selectedField.nameFormat ?? "Full Name"}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          updateField(selectedField.id, { nameFormat: val, dataLabel: val });
+                        }}
+                        aria-label="Name format"
+                        className="prepare-property-select"
+                      >
+                        <option value="Full Name">Full Name</option>
+                        <option value="First Name">First Name</option>
+                        <option value="Last Name">Last Name</option>
+                      </select>
+                    </div>
+                    <label className="prepare-property-row">
+                      <span>Default Value</span>
+                      <input
+                        type="text"
+                        value={selectedField.defaultValue ?? ""}
+                        onChange={(e) => updateField(selectedField.id, { defaultValue: e.target.value })}
+                        placeholder="Pre-fill with value"
+                      />
+                    </label>
+                  </>
+                )}
+                {["Email", "Company", "Title"].includes(selectedField.type) && (
+                  <label className="prepare-property-row">
+                    <span>Default Value</span>
+                    <input
+                      type="text"
+                      value={selectedField.defaultValue ?? ""}
+                      onChange={(e) => updateField(selectedField.id, { defaultValue: e.target.value })}
+                      placeholder="Pre-fill with value"
+                    />
+                  </label>
                 )}
                 <label className="prepare-property-row prepare-property-check">
                   <input
@@ -2281,6 +2424,15 @@ function DocumentDetailPage() {
                       Number ▾
                     </button>
                     <div className="prepare-property-section-body">
+                      <label className="prepare-property-row">
+                        <span>Default Value</span>
+                        <input
+                          type="text"
+                          value={selectedField.defaultValue ?? ""}
+                          onChange={(e) => updateField(selectedField.id, { defaultValue: e.target.value })}
+                          placeholder="Pre-fill with value"
+                        />
+                      </label>
                       <label className="prepare-property-row">
                         <span>Min value</span>
                         <input
@@ -2348,9 +2500,18 @@ function DocumentDetailPage() {
                 {selectedField.type === "Text" && (
                   <div className="prepare-property-section prepare-property-section-expanded">
                     <button type="button" className="prepare-property-section-head">
-                      Add Text ▾
+                      Text Field ▾
                     </button>
                     <div className="prepare-property-section-body">
+                      <label className="prepare-property-row">
+                        <span>Default Value</span>
+                        <input
+                          type="text"
+                          value={selectedField.defaultValue ?? ""}
+                          onChange={(e) => updateField(selectedField.id, { defaultValue: e.target.value })}
+                          placeholder="Pre-fill with value"
+                        />
+                      </label>
                       <label className="prepare-property-row">
                         <textarea
                           value={selectedField.addText ?? ""}

@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
 import PdfMainView from "../components/PdfMainView.jsx";
 import AdoptSignatureModal from "../components/AdoptSignatureModal.jsx";
+import DatePicker from "../components/DatePicker.jsx";
 import collingsLogo from "../assets/collings-logo-1.png";
 
 export default function SigningPage() {
@@ -41,6 +42,7 @@ export default function SigningPage() {
   const textMeasureRefs = useRef({});
   const containerRef = useRef(null);
   const pdfInnerRef = useRef(null);
+  const [editingDateFieldId, setEditingDateFieldId] = useState(null);
 
   const fetchInfo = useCallback(async () => {
     setLinkExpired(false);
@@ -270,6 +272,9 @@ export default function SigningPage() {
   };
 
   const saveFieldValue = useCallback(async (fieldId, value) => {
+
+    console.log("saveFieldValue", fieldId, value);
+
     const trimmed = value == null ? "" : String(value).trim();
     setSavedFieldValues((prev) => ({ ...prev, [fieldId]: trimmed }));
     try {
@@ -348,6 +353,7 @@ export default function SigningPage() {
       const t = (f.type || "signature").toLowerCase();
       if (!TEXT_FIELD_TYPES_FOR_MEASURE.includes(t)) continue;
       let value = localFieldOverrides[f.id] ?? savedFieldValues[f.id] ?? fieldValues[f.id] ?? "";
+      if (!value && f.defaultValue) value = String(f.defaultValue).trim();
       if (!value && t === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
       const el = textMeasureRefs.current[f.id];
       if (el) {
@@ -449,6 +455,7 @@ export default function SigningPage() {
     const key = getFieldKey(f);
     const t = (f.type || "signature").toLowerCase();
     let value = (localFieldOverrides[key] ?? savedFieldValues[key] ?? fieldValues[f.id] ?? fieldValues[key] ?? "").toString().trim();
+    if (!value && f.defaultValue) value = String(f.defaultValue).trim();
     if (!value && t === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
     return value.length > 0; // radio must have a value (user chose 1)
   });
@@ -482,14 +489,10 @@ export default function SigningPage() {
               <div
                 ref={pdfInnerRef}
                 className="prepare-pdf-inner"
-                style={{
-                  transform: `scale(${zoom / 100})`,
-                  transformOrigin: "0 0",
-                }}
               >
                 <div className="prepare-pdf-wrap">
                   {fileUrl ? (
-                    <PdfMainView fileUrl={fileUrl} />
+                    <PdfMainView fileUrl={fileUrl} fixedPageWidth={Math.round(800 * (zoom / 100))} />
                   ) : fileUrlLoading ? (
                     <div className="signing-loading" role="status" aria-live="polite">Loading PDF…</div>
                   ) : fileUrlError ? (
@@ -632,16 +635,13 @@ export default function SigningPage() {
               <div
                 ref={pdfInnerRef}
                 className="prepare-pdf-inner"
-                style={{
-                  transform: `scale(${scale})`,
-                  transformOrigin: "0 0",
-                }}
               >
                 <div className="prepare-pdf-wrap">
                   {fileUrl ? (
                     <PdfMainView
                       key={isSigned ? `signed-${doc?.id}-${fileUrl}` : `draft-${fileUrl}`}
                       fileUrl={fileUrl}
+                      fixedPageWidth={Math.round(800 * scale)}
                       renderPageOverlay={!isSigned ? (pageNum) => {
                         const pageFields = fields.filter((f) => (f.page ?? 1) === pageNum);
                         return pageFields.map((f) => {
@@ -659,6 +659,8 @@ export default function SigningPage() {
                       if (typeLower === "note") {
                         const noteText = (f.noteContent ?? "").trim();
                         if (!noteText) return null;
+                        const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 40;
+                        const dynamicNoteFontSize = Math.max(10, Math.min(16, boxHeightPx * 0.25));
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -671,11 +673,13 @@ export default function SigningPage() {
                               height: `${hPct}%`,
                             }}
                           >
-                            <div className="signing-field-note-content">{noteText}</div>
+                            <div className="signing-field-note-content" style={{ fontSize: `${dynamicNoteFontSize}px` }}>{noteText}</div>
                           </div>
                         );
                       }
                       if (typeLower === "approve") {
+                        const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 36;
+                        const dynamicButtonFontSize = Math.max(12, Math.min(20, boxHeightPx * 0.4));
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -694,6 +698,7 @@ export default function SigningPage() {
                               onClick={handleApprove}
                               disabled={approving || !!approvedAt}
                               aria-label="Approve"
+                              style={{ fontSize: `${dynamicButtonFontSize}px` }}
                             >
                               {approvedAt ? "Approved" : (approving ? "…" : "Approve")}
                             </button>
@@ -701,6 +706,8 @@ export default function SigningPage() {
                         );
                       }
                       if (typeLower === "decline") {
+                        const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 36;
+                        const dynamicButtonFontSize = Math.max(12, Math.min(20, boxHeightPx * 0.4));
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -719,6 +726,7 @@ export default function SigningPage() {
                               onClick={() => setDeclineConfirmOpen(true)}
                               disabled={declining}
                               aria-label="Decline"
+                              style={{ fontSize: `${dynamicButtonFontSize}px` }}
                             >
                               {declining ? "…" : "Decline"}
                             </button>
@@ -730,10 +738,14 @@ export default function SigningPage() {
                         const fieldKey = getFieldKey(f);
                         const isReadOnly = f.readOnly === true;
                         const rawValue = localFieldOverrides[fieldKey] ?? savedFieldValues[fieldKey] ?? fieldValues[f.id] ?? fieldValues[fieldKey];
-                        const value = rawValue ?? (typeLower === "text" && (f.addText ?? "").trim() ? f.addText.trim() : "");
+                        let value = rawValue;
+                        if (!value && f.defaultValue) value = String(f.defaultValue).trim();
+                        if (!value && typeLower === "text" && (f.addText ?? "").trim()) value = f.addText.trim();
+                        if (!value) value = "";
                         const label = typeLower === "date" ? "Date signed" : typeLower === "name" ? (f.nameFormat ?? "Full Name") : typeLower.charAt(0).toUpperCase() + typeLower.slice(1);
-                        const effectiveW = (textFieldWidths[f.id] && rw > 0) ? `${Math.max(wPct, (textFieldWidths[f.id] / rw) * 100)}%` : `${wPct}%`;
-                        const textFormatStyle = getTextFieldFormatStyle(f);
+                        const placeholderText = typeLower === "number" && f.placeholder ? f.placeholder : label;
+                        const dynamicFontSize = `${Math.max(0.5, Math.min(1.2, hPct * 0.15))}rem`;
+                        const textFormatStyle = { ...getTextFieldFormatStyle(f), fontSize: dynamicFontSize };
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -742,7 +754,7 @@ export default function SigningPage() {
                               position: "absolute",
                               left: `${xPct}%`,
                               top: `${yPct}%`,
-                              width: effectiveW,
+                              width: `${wPct}%`,
                               height: `${hPct}%`,
                             }}
                           >
@@ -754,20 +766,78 @@ export default function SigningPage() {
                             >
                               {typeof value === "string" ? value : String(value ?? "")}
                             </span>
-                            <input
-                              type={typeLower === "email" ? "email" : typeLower === "date" ? "date" : "text"}
-                              inputMode={typeLower === "number" ? "numeric" : "text"}
-                              className="signing-field-text-input"
-                              style={textFormatStyle}
-                              value={value}
-                              readOnly={isReadOnly}
-                              disabled={isReadOnly}
-                              onChange={isReadOnly ? undefined : (e) => setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: e.target.value }))}
-                              onBlur={isReadOnly ? undefined : (e) => saveFieldValue(fieldKey, e.target.value)}
-                              placeholder={label}
-                              aria-label={label}
-                              aria-readonly={isReadOnly}
-                            />
+                            {typeLower === "date" && editingDateFieldId === f.id ? (
+                              <DatePicker
+                                value={value}
+                                onChange={(newDate) => {
+                                  console.log("DatePicker onChange:", fieldKey, newDate);
+                                  setLocalFieldOverrides((prev) => {
+                                    const updated = { ...prev, [fieldKey]: newDate };
+                                    console.log("Updated localFieldOverrides:", updated);
+                                    return updated;
+                                  });
+                                  saveFieldValue(fieldKey, newDate);
+                                }}
+                                onClose={() => {
+                                  console.log("DatePicker onClose, current value:", value);
+                                  setEditingDateFieldId(null);
+                                }}
+                                autoFocus={true}
+                                fontSize={dynamicFontSize}
+                              />
+                            ) : typeLower === "date" ? (
+                              <div style={{ display: "flex", alignItems: "center", width: "100%", height: "100%", position: "relative" }}>
+                                <input
+                                  type="text"
+                                  className="signing-field-text-input"
+                                  style={{ ...textFormatStyle, flex: 1, paddingRight: "30px", cursor: isReadOnly ? "default" : "pointer" }}
+                                  value={value}
+                                  readOnly={isReadOnly}
+                                  disabled={isReadOnly}
+                                  onChange={isReadOnly ? undefined : (e) => {
+                                    setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: e.target.value }));
+                                  }}
+                                  onClick={!isReadOnly ? () => {
+                                    setEditingDateFieldId(f.id);
+                                  } : undefined}
+                                  onBlur={isReadOnly ? undefined : (e) => saveFieldValue(fieldKey, e.target.value)}
+                                  placeholder="DD/MM/YYYY"
+                                  aria-label={label}
+                                  aria-readonly={isReadOnly}
+                                />
+                                {!isReadOnly && (
+                                  <i 
+                                    className="lni lni-calendar-days" 
+                                    style={{ 
+                                      position: "absolute", 
+                                      right: "8px", 
+                                      fontSize: dynamicFontSize, 
+                                      color: "#64748b",
+                                      cursor: "pointer",
+                                      pointerEvents: "none"
+                                    }} 
+                                    aria-hidden 
+                                  />
+                                )}
+                              </div>
+                            ) : (
+                              <input
+                                type={typeLower === "email" ? "email" : typeLower === "number" ? "text" : "text"}
+                                inputMode={typeLower === "number" ? "numeric" : "text"}
+                                className="signing-field-text-input"
+                                style={textFormatStyle}
+                                value={value}
+                                readOnly={isReadOnly}
+                                disabled={isReadOnly}
+                                onChange={isReadOnly ? undefined : (e) => {
+                                  setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: e.target.value }));
+                                }}
+                                onBlur={isReadOnly ? undefined : (e) => saveFieldValue(fieldKey, e.target.value)}
+                                placeholder={placeholderText}
+                                aria-label={label}
+                                aria-readonly={isReadOnly}
+                              />
+                            )}
                           </div>
                         );
                       }
@@ -779,6 +849,9 @@ export default function SigningPage() {
                         const valueStr = (rawValue ?? defaultVal).toString().trim();
                         const isChecked = valueStr === "Yes" || valueStr === "true";
                         const caption = (f.caption ?? "").trim() || "Checkbox";
+                        const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 24;
+                        const dynamicCheckboxSize = Math.max(12, Math.min(20, boxHeightPx * 0.5));
+                        const dynamicCaptionSize = Math.max(10, Math.min(16, boxHeightPx * 0.45));
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -802,8 +875,9 @@ export default function SigningPage() {
                                   saveFieldValue(fieldKey, v);
                                 }}
                                 aria-label={caption}
+                                style={{ width: `${dynamicCheckboxSize}px`, height: `${dynamicCheckboxSize}px` }}
                               />
-                              <span className="signing-field-checkbox-caption">{caption}</span>
+                              <span className="signing-field-checkbox-caption" style={{ fontSize: `${dynamicCaptionSize}px` }}>{caption}</span>
                             </label>
                           </div>
                         );
@@ -819,6 +893,9 @@ export default function SigningPage() {
                         const value = localFieldOverrides[fieldKey] ?? savedFieldValues[fieldKey] ?? fieldValues[f.id] ?? fieldValues[fieldKey] ?? defaultVal;
                         const valueStr = (typeof value === "string" ? value : String(value ?? "")).trim();
                         const selectedVal = valueStr && optionLabels.includes(valueStr) ? valueStr : "";
+                        const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 24;
+                        const dynamicRadioSize = Math.max(12, Math.min(20, boxHeightPx * 0.5));
+                        const dynamicRadioTextSize = Math.max(10, Math.min(16, boxHeightPx * 0.45));
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -837,7 +914,7 @@ export default function SigningPage() {
                                 if (!displayText) return null;
                                 const isSelected = selectedVal === displayText;
                                 return (
-                                  <label key={idx} className="signing-field-radio-option">
+                                  <label key={idx} className="signing-field-radio-option" style={{ fontSize: `${dynamicRadioTextSize}px` }}>
                                     <input
                                       type="radio"
                                       name={groupName}
@@ -847,6 +924,7 @@ export default function SigningPage() {
                                         saveFieldValue(fieldKey, displayText);
                                       }}
                                       aria-label={displayText}
+                                      style={{ width: `${dynamicRadioSize}px`, height: `${dynamicRadioSize}px` }}
                                     />
                                     <span>{displayText}</span>
                                   </label>
@@ -866,6 +944,8 @@ export default function SigningPage() {
                         const value = localFieldOverrides[fieldKey] ?? savedFieldValues[fieldKey] ?? fieldValues[f.id] ?? fieldValues[fieldKey] ?? defaultVal;
                         const valueStr = (typeof value === "string" ? value : String(value ?? "")).trim();
                         const valueToShow = valueStr && optionLabels.includes(valueStr) ? valueStr : "";
+                        const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 28;
+                        const dynamicDropdownFontSize = Math.max(10, Math.min(18, boxHeightPx * 0.45));
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -887,6 +967,7 @@ export default function SigningPage() {
                                 saveFieldValue(fieldKey, v);
                               }}
                               aria-label={f.dataLabel || "Dropdown"}
+                              style={{ fontSize: `${dynamicDropdownFontSize}px` }}
                             >
                               <option value="">-- select --</option>
                               {opts.map((o, idx) => {
@@ -906,6 +987,11 @@ export default function SigningPage() {
                       const isInitialField = typeLower === "initial";
                       const hasSigned = !!(fieldSignatureData[f.id] ?? (signatureData && Object.keys(fieldSignatureData).length === 0 ? signatureData : null));
                       const fieldSignature = fieldSignatureData[f.id] || (Object.keys(fieldSignatureData).length === 0 ? signatureData : null);
+                      const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 36;
+                      const showSignedBy = boxHeightPx >= 45;
+                      const dynamicFontSize = Math.max(12, Math.min(48, boxHeightPx * (showSignedBy ? 0.45 : 0.6)));
+                      const dynamicSignedBySize = Math.max(8, Math.min(14, boxHeightPx * 0.15));
+                      const dynamicIdSize = Math.max(6, Math.min(12, boxHeightPx * 0.12));
                       return (
                         <div
                           key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -925,16 +1011,18 @@ export default function SigningPage() {
                               onClick={() => openSignModal(f.id)}
                               aria-label={isInitialField ? "Change initials" : "Change signature"}
                             >
-                              {!isInitialField && <span className="signing-field-signed-by">Signed by:</span>}
+                              {showSignedBy && <span className="signing-field-signed-by" style={{ fontSize: `${dynamicSignedBySize}px` }}>Signed by:</span>}
                               <div className="signing-field-signature-inner">
                                 <SigningFieldSignature
                                   signatureData={fieldSignature}
                                   signerName={signRequest.signerName}
                                   initials={getInitials(signRequest.signerName)}
                                   initialsOnly={isInitialField}
+                                  boxHeight={boxHeightPx}
+                                  dynamicFontSize={dynamicFontSize}
                                 />
                               </div>
-                              <span className="signing-field-signed-id">
+                              <span className="signing-field-signed-id" style={{ fontSize: `${dynamicIdSize}px` }}>
                                 {signRequest.id ? String(signRequest.id).slice(-12) : "••••••••"}
                               </span>
                             </button>
@@ -944,6 +1032,7 @@ export default function SigningPage() {
                               className="signing-field-btn"
                               onClick={() => openSignModal(f.id)}
                               aria-label={isInitialField ? "Click to add initials" : "Click to sign"}
+                              style={{ fontSize: `${Math.max(12, boxHeightPx * 0.4)}px` }}
                             >
                               <span className="signing-field-label">{isInitialField ? "Initial" : "Sign"}</span>
                               <span className="signing-field-icon" aria-hidden><i className="lni lni-pen-to-square" aria-hidden /></span>
@@ -1154,7 +1243,7 @@ function getInitials(name) {
   return name.trim().slice(0, 2).toUpperCase();
 }
 
-function SigningFieldSignature({ signatureData, signerName, initials, initialsOnly = false }) {
+function SigningFieldSignature({ signatureData, signerName, initials, initialsOnly = false, boxHeight = 36, dynamicFontSize = 18 }) {
   const isImage = typeof signatureData === "string" && (signatureData.startsWith("data:image") || signatureData.startsWith("http"));
   const isTyped = typeof signatureData === "string" && signatureData.startsWith("typed::");
   const parts = isTyped ? signatureData.split("::") : [];
@@ -1163,7 +1252,7 @@ function SigningFieldSignature({ signatureData, signerName, initials, initialsOn
   const typedInitials = (parts[3] != null && parts[3] !== "") ? parts[3] : initials;
   const displayName = typedName || signerName || "Signed";
   const displayInitials = typedInitials || initials || "—";
-  const fontSize = Math.max(11, Math.min(24, Number(parts[4]) || 28));
+  const fontSize = dynamicFontSize;
 
   const showText = initialsOnly ? displayInitials : displayName;
 
