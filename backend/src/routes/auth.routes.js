@@ -5,9 +5,16 @@ const path = require('path');
 const fs = require('fs');
 const User = require('../models/User');
 const OtpRecord = require('../models/OtpRecord');
+const SignupRequest = require('../models/SignupRequest');
 const { signToken, authOptional, requireAuth } = require('../middleware/auth');
-const { sendProfileOtpEmail, sendSignupOtpEmail, sendForgotPasswordOtpEmail } = require('../services/email.service');
-const { uploadDir } = require('../config/env');
+const {
+  sendProfileOtpEmail,
+  sendSignupOtpEmail,
+  sendForgotPasswordOtpEmail,
+  sendSignupRequestNotificationEmail,
+  sendSignupApprovedEmail,
+} = require('../services/email.service');
+const { uploadDir, defaultAdminEmail, defaultAdminPassword, defaultAdminName } = require('../config/env');
 
 const router = express.Router();
 
@@ -44,6 +51,32 @@ async function verifyRecaptcha(token) {
   // Captcha disabled
   return true;
 }
+
+// Ensure default admin exists (called when login page loads)
+router.get('/ensure-default-admin', async (req, res) => {
+  try {
+    const adminCount = await User.countDocuments({ roles: 'admin' });
+    if (adminCount > 0) {
+      return res.json({ ok: true });
+    }
+    const email = (defaultAdminEmail || '').trim().toLowerCase();
+    const password = (defaultAdminPassword || '').trim();
+    const name = (defaultAdminName || '').trim() || 'Default Admin';
+    if (!email || !password) {
+      return res.json({ ok: true });
+    }
+    const existing = await User.findOne({ email });
+    if (existing) {
+      return res.json({ ok: true });
+    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    await User.create({ email, passwordHash, name, roles: ['user', 'admin'] });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+});
 
 // Step 1: Send OTP to email
 router.post('/signup-send-otp', async (req, res) => {
@@ -91,12 +124,58 @@ router.post('/signup-verify-otp', async (req, res) => {
       return res.status(400).json({ error: 'Invalid verification code.' });
     }
     await OtpRecord.deleteOne({ key: email, type: 'signup_otp' });
-    await OtpRecord.findOneAndUpdate(
-      { key: email, type: 'signup_verified' },
-      { expiresAt: new Date(Date.now() + SIGNUP_VERIFIED_EXPIRY_MS) },
+
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(409).json({ error: 'Email already in use' });
+    }
+
+    const request = await SignupRequest.findOne({ email });
+
+    if (request && request.status === 'approved') {
+      const userExists = await User.findOne({ email });
+      if (userExists) {
+        return res.json({
+          ok: true,
+          accountExists: true,
+          message: 'Your account already exists. Please log in.',
+        });
+      }
+      await OtpRecord.findOneAndUpdate(
+        { key: email, type: 'signup_verified' },
+        { expiresAt: new Date(Date.now() + SIGNUP_VERIFIED_EXPIRY_MS) },
+        { upsert: true, new: true }
+      );
+      return res.json({ ok: true });
+    }
+
+    const pending = await SignupRequest.findOneAndUpdate(
+      { email },
+      { email, status: 'pending' },
       { upsert: true, new: true }
     );
-    res.json({ ok: true });
+
+    // Notify all admins by email (best-effort)
+    try {
+      const admins = await User.find({ roles: 'admin' }).select('email').lean();
+      const adminEmails = admins.map((a) => a.email).filter(Boolean);
+      if (adminEmails.length) {
+        await Promise.all(
+          adminEmails.map((to) =>
+            sendSignupRequestNotificationEmail({ to, requesterEmail: email })
+          )
+        );
+      }
+    } catch (notifyErr) {
+      console.error('[signup] Failed to notify admins of signup request', notifyErr);
+    }
+
+    res.json({
+      ok: true,
+      awaitingApproval: true,
+      requestId: pending._id.toString(),
+      message: 'Your account request has been sent to an administrator for approval.',
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -134,14 +213,19 @@ router.post('/signup', async (req, res) => {
       return res.status(409).json({ error: 'Email already in use' });
     }
 
+    const approvedRequest = await SignupRequest.findOne({ email: trimmedEmail, status: 'approved' });
+    if (!approvedRequest) {
+      return res.status(400).json({ error: 'This email is not approved for signup. Please wait for an administrator to approve your request.' });
+    }
+
     const name = [firstName, lastName].map((s) => String(s || '').trim()).filter(Boolean).join(' ') || 'User';
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = await User.create({ email: trimmedEmail, passwordHash, name });
+    const user = await User.create({ email: trimmedEmail, passwordHash, name, roles: ['user'] });
     const token = signToken(user);
 
     res.status(201).json({
       token,
-      user: { id: user._id.toString(), email: user.email, name: user.name, profileImageUrl: user.profileImageUrl || null },
+      user: { id: user._id.toString(), email: user.email, name: user.name, profileImageUrl: user.profileImageUrl || null, roles: user.roles || ['user'] },
     });
   } catch (err) {
     console.error(err);
@@ -263,7 +347,14 @@ router.post('/login', async (req, res) => {
     const token = signToken(user);
     res.json({
       token,
-      user: { id: user._id.toString(), email: user.email, name: user.name, profileImageUrl: user.profileImageUrl || null },
+      user: {
+        id: user._id.toString(),
+        email: user.email,
+        name: user.name,
+        profileImageUrl: user.profileImageUrl || null,
+        roles: Array.isArray(user.roles) && user.roles.length ? user.roles : (user.role ? [user.role] : ['user']),
+        mustChangePassword: !!user.mustChangePassword,
+      },
     });
   } catch (err) {
     console.error(err);
@@ -344,7 +435,7 @@ router.post('/verify-profile-update', requireAuth, async (req, res) => {
       { new: true, runValidators: true }
     );
     res.json({
-      user: { id: user._id.toString(), email: user.email, name: user.name, profileImageUrl: user.profileImageUrl || null },
+      user: { id: user._id.toString(), email: user.email, name: user.name, profileImageUrl: user.profileImageUrl || null, roles: user.roles || ['user'] },
     });
   } catch (err) {
     console.error(err);
@@ -372,12 +463,14 @@ router.post('/verify-password', requireAuth, async (req, res) => {
   }
 });
 
-// Change password – requires current password verification first
+// Change password – requires current password except when mustChangePassword (temp password flow)
 router.post('/change-password', requireAuth, async (req, res) => {
   try {
-    const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({ error: 'Current password and new password are required' });
+    const { currentPassword, newPassword, name: nameInput } = req.body;
+    const isTempPasswordFlow = !!req.user?.mustChangePassword;
+
+    if (!newPassword) {
+      return res.status(400).json({ error: 'New password is required' });
     }
     if (newPassword.length < 6) {
       return res.status(400).json({ error: 'New password must be at least 6 characters' });
@@ -386,14 +479,39 @@ router.post('/change-password', requireAuth, async (req, res) => {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
-    if (!valid) {
-      return res.status(401).json({ error: 'Current password is incorrect' });
+    if (!isTempPasswordFlow) {
+      if (!currentPassword) {
+        return res.status(400).json({ error: 'Current password is required' });
+      }
+      const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+      if (!valid) {
+        return res.status(401).json({ error: 'Current password is incorrect' });
+      }
     }
 
-    const passwordHash = await bcrypt.hash(newPassword, 10);
-    await User.findByIdAndUpdate(req.user.id, { $set: { passwordHash } });
-    res.json({ ok: true, message: 'Password updated successfully.' });
+    const update = { passwordHash: await bcrypt.hash(newPassword, 10), mustChangePassword: false };
+    if (isTempPasswordFlow && nameInput != null) {
+      const trimmed = String(nameInput || '').trim();
+      if (!trimmed) return res.status(400).json({ error: 'Name is required' });
+      update.name = trimmed;
+    }
+    const updated = await User.findByIdAndUpdate(
+      req.user.id,
+      { $set: update },
+      { new: true }
+    );
+    res.json({
+      ok: true,
+      message: 'Password updated successfully.',
+      user: updated ? {
+        id: updated._id.toString(),
+        email: updated.email,
+        name: updated.name,
+        profileImageUrl: updated.profileImageUrl || null,
+        roles: updated.roles || ['user'],
+        mustChangePassword: false,
+      } : undefined,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
@@ -424,7 +542,7 @@ router.post('/upload-profile-photo', requireAuth, (req, res, next) => {
       { new: true, runValidators: true }
     );
     res.json({
-      user: { id: user._id.toString(), email: user.email, name: user.name, profileImageUrl: user.profileImageUrl || null },
+      user: { id: user._id.toString(), email: user.email, name: user.name, profileImageUrl: user.profileImageUrl || null, roles: user.roles || ['user'] },
     });
   } catch (err) {
     console.error(err);

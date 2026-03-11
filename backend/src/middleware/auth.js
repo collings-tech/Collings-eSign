@@ -12,7 +12,19 @@ async function authOptional(req, res, next) {
     const payload = jwt.verify(token, jwtSecret);
     const user = await User.findById(payload.sub).lean();
     if (user) {
-      req.user = { id: user._id.toString(), email: user.email, name: user.name, profileImageUrl: user.profileImageUrl || null };
+      const roles = Array.isArray(user.roles) && user.roles.length
+        ? user.roles
+        : (user.role ? [user.role] : ['user']); // backward compat for older docs
+      const normalizedRoles = Array.from(new Set(roles.map((r) => String(r || '').trim()).filter(Boolean)));
+      if (!normalizedRoles.includes('user')) normalizedRoles.push('user');
+      req.user = {
+        id: user._id.toString(),
+        email: user.email,
+        name: user.name,
+        profileImageUrl: user.profileImageUrl || null,
+        roles: normalizedRoles,
+        mustChangePassword: !!user.mustChangePassword,
+      };
     }
   } catch (err) {
     // ignore invalid token
@@ -23,6 +35,16 @@ async function authOptional(req, res, next) {
 function requireAuth(req, res, next) {
   if (!req.user) {
     return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  if (!Array.isArray(req.user.roles) || !req.user.roles.includes('admin')) {
+    return res.status(403).json({ error: 'Forbidden' });
   }
   next();
 }
@@ -39,6 +61,7 @@ function signToken(user) {
 module.exports = {
   authOptional,
   requireAuth,
+  requireAdmin,
   signToken,
 };
 

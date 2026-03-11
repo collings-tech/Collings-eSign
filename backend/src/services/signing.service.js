@@ -1,10 +1,14 @@
 const crypto = require("crypto");
+const fs = require("fs").promises;
+const path = require("path");
 const Document = require("../models/Document");
 const SignRequest = require("../models/SignRequest");
 const User = require("../models/User");
 const { logEvent } = require("./audit.service");
-const { sendSignRequestEmail, sendDocuSignStyleSignEmail, sendDocumentCompletedEmail, sendSignedWaitingForOthersEmail } = require("./email.service");
+const { sendSignRequestEmail, sendDocuSignStyleSignEmail, sendDocumentCompletedEmail, sendSignedWaitingForOthersEmail, sendSignedDocumentToSender } = require("./email.service");
 const { embedSignatureInPdf, applyVoidWatermark } = require("./pdfSign.service");
+const storageService = require("./storage.service");
+const { uploadDir } = require("../config/env");
 
 function generateToken() {
   return crypto.randomBytes(32).toString("hex");
@@ -190,6 +194,28 @@ async function completeSigning({ token, ip, userAgent }) {
       }
     } catch (err) {
       console.error("[signing] sendDocumentCompletedEmail to all failed", err);
+    }
+    // Email the signed document (with attachment) to the sender (document owner)
+    try {
+      const owner = await User.findById(doc.ownerId).lean();
+      if (owner?.email) {
+        let pdfBuffer;
+        if (signedResult.startsWith("documents/") && storageService.isStorageConfigured()) {
+          pdfBuffer = await storageService.download(signedResult);
+        } else {
+          pdfBuffer = await fs.readFile(path.join(uploadDir, signedResult));
+        }
+        const fileName = (documentTitle.endsWith(".pdf") ? documentTitle : `${documentTitle}.pdf`);
+        await sendSignedDocumentToSender({
+          to: owner.email,
+          senderName: owner.name || owner.email,
+          documentTitle,
+          pdfBuffer,
+          fileName,
+        });
+      }
+    } catch (err) {
+      console.error("[signing] sendSignedDocumentToSender failed", err);
     }
   } else {
     // Not all signed: tell this signer they've signed and will get the document by email when envelope is complete

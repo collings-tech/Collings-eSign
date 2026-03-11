@@ -62,6 +62,7 @@ const signRequestSchema = new mongoose.Schema(
     signLinkToken: { type: String, required: true, unique: true },
     order: { type: Number, default: 0 }, // signing order (1 = first to receive and sign)
     emailSentAt: { type: Date }, // when the sign link email was sent (for sequential flow)
+    firstViewedAt: { type: Date }, // when recipient first opened/viewed the document (triggers sender notification)
     expiresAt: { type: Date },
     status: {
       type: String,

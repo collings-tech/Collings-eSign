@@ -10,6 +10,9 @@ import TemplatesPage from "./pages/TemplatesPage.jsx";
 import TemplateViewPage from "./pages/TemplateViewPage.jsx";
 import ProfilePage from "./pages/ProfilePage.jsx";
 import SigningPage from "./pages/SigningPage.jsx";
+import UsersPage from "./pages/UsersPage.jsx";
+import UserRequestsPage from "./pages/UserRequestsPage.jsx";
+import ForceChangePasswordModal from "./components/ForceChangePasswordModal.jsx";
 import { AuthProvider, useAuth } from "./auth/AuthContext.jsx";
 
 function PrivateRoute({ children }) {
@@ -25,6 +28,36 @@ function PrivateRoute({ children }) {
     return <Navigate to="/login" replace />;
   }
   return children;
+}
+
+function AdminRoute({ children }) {
+  const { user, initializing } = useAuth();
+  if (initializing) {
+    return (
+      <div className="auth-loading" aria-label="Loading">
+        <span>Loading…</span>
+      </div>
+    );
+  }
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+  if (!Array.isArray(user.roles) || !user.roles.includes("admin")) {
+    return <Navigate to="/" replace />;
+  }
+  return children;
+}
+
+function AppContent() {
+  const { user } = useAuth();
+  if (user && user.mustChangePassword) {
+    return (
+      <div style={{ position: "fixed", inset: 0, overflow: "hidden" }}>
+        <ForceChangePasswordModal />
+      </div>
+    );
+  }
+  return <AppRoutes />;
 }
 
 function AppRoutes() {
@@ -88,6 +121,22 @@ function AppRoutes() {
           </PrivateRoute>
         }
       />
+      <Route
+        path="/users"
+        element={
+          <AdminRoute>
+            <UsersPage />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/user-requests"
+        element={
+          <AdminRoute>
+            <UserRequestsPage />
+          </AdminRoute>
+        }
+      />
       <Route path="/sign/:token" element={<SigningPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
@@ -97,7 +146,7 @@ function AppRoutes() {
 function App() {
   return (
     <AuthProvider>
-      <AppRoutes />
+      <AppContent />
     </AuthProvider>
   );
 }

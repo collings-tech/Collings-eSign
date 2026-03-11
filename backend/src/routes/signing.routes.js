@@ -1,10 +1,12 @@
 const express = require('express');
 const SignRequest = require('../models/SignRequest');
 const Document = require('../models/Document');
+const User = require('../models/User');
 const { saveSignatureOnly, saveFieldValue, completeSigning, approveSigning, declineSigning } = require('../services/signing.service');
 const AuditLog = require('../models/AuditLog');
 const { logEvent } = require('../services/audit.service');
 const storageService = require('../services/storage.service');
+const { sendDocumentViewedNotificationToSender } = require('../services/email.service');
 
 const router = express.Router();
 
@@ -73,6 +75,25 @@ router.get('/:token', async (req, res) => {
     const doc = await Document.findById(signReq.documentId).lean();
     if (!doc) {
       return res.status(404).json({ error: 'Document not found' });
+    }
+
+    // First-time view: atomically mark viewed and notify sender (only on first view)
+    const firstViewUpdate = await SignRequest.findOneAndUpdate(
+      { signLinkToken: token, firstViewedAt: { $exists: false } },
+      { $set: { firstViewedAt: new Date() } },
+      { new: true }
+    );
+    if (firstViewUpdate) {
+      User.findById(doc.ownerId).lean().then((owner) => {
+        if (owner?.email) {
+          sendDocumentViewedNotificationToSender({
+            to: owner.email,
+            senderName: owner.name || owner.email,
+            documentTitle: doc.title || 'Document',
+            recipientName: signReq.signerName || signReq.signerEmail,
+          }).catch((err) => console.error('[signing] sendDocumentViewedNotificationToSender failed', err));
+        }
+      }).catch((err) => console.error('[signing] failed to fetch owner for viewed notification', err));
     }
 
     await logEvent({

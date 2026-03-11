@@ -265,6 +265,7 @@ button:disabled {
 }
 
 .auth-link-btn:hover {
+  text-decoration: underline;
 }
 
 .auth-step-actions {
@@ -585,7 +586,6 @@ button:disabled {
   height: 22px;
   width: auto;
   display: block;
-  vertical-align: middle;
 }
 
 .top-brand-esign {
@@ -866,6 +866,9 @@ body.top-sidebar-open .top-sidebar {
   font-weight: 700;
   letter-spacing: -0.02em;
 }
+.ds-hero h1 .status-pill {
+  vertical-align: middle;
+}
 
 .ds-hero p {
   margin: 0.75rem 0 0;
@@ -1121,6 +1124,105 @@ body.top-sidebar-open .top-sidebar {
   min-width: 2rem;
   width: 2rem;
   height: 2rem;
+}
+
+/* Users table */
+.users-table .agreements-table-head,
+.users-table .agreements-row {
+  grid-template-columns: minmax(200px, 1.25fr) minmax(240px, 1.6fr) 160px 200px minmax(180px, auto);
+}
+.users-table .agreements-col-actions {
+  justify-content: flex-end;
+}
+
+/* User requests table – 4 columns: EMAIL, STATUS, REQUESTED, actions */
+.user-requests-table {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) 120px minmax(160px, 1fr) minmax(200px, auto);
+  gap: 0 1rem;
+}
+.user-requests-table .agreements-table-head,
+.user-requests-table .agreements-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+}
+.user-requests-table .agreements-col-actions {
+  justify-content: flex-end;
+}
+.user-requests-table .agreements-last {
+  white-space: nowrap;
+}
+
+/* Users edit modal */
+.users-edit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-nav);
+  margin: 0.5rem 0 1.25rem;
+}
+.users-edit-row-title {
+  font-weight: 700;
+  color: var(--color-text);
+}
+.users-edit-row-subtitle {
+  margin-top: 0.15rem;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.users-toggle {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+.users-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.users-toggle-track {
+  width: 46px;
+  height: 26px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  border: 1px solid rgba(0,0,0,0.08);
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  box-sizing: border-box;
+  transition: background 0.15s ease;
+}
+.users-toggle-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+  transform: translateX(0);
+  transition: transform 0.15s ease;
+}
+.users-toggle input:checked + .users-toggle-track {
+  background: var(--color-accent);
+}
+.users-toggle input:checked + .users-toggle-track .users-toggle-thumb {
+  transform: translateX(20px);
+}
+.users-toggle input:focus-visible + .users-toggle-track {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.users-toggle input:disabled + .users-toggle-track {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .agreements-search input {
@@ -1593,6 +1695,13 @@ body.top-sidebar-open .top-sidebar {
   color: #1e40af;
 }
 
+.status-admin {
+  background: #ede9fe;
+  color: #5b21b6;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
 .dashboard-hero {
   display: grid;
   grid-template-columns: minmax(0, 1.8fr) minmax(0, 1.2fr);
@@ -1632,6 +1741,9 @@ body.top-sidebar-open .top-sidebar {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
 }
+.dashboard-stats--five-cols {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
 
 .stat-card {
   background: #f8fafc;
@@ -1655,6 +1767,21 @@ body.top-sidebar-open .top-sidebar {
   font-weight: 700;
   color: var(--color-text);
   letter-spacing: -0.02em;
+}
+
+.stat-card-link {
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.stat-card-link:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.stat-value-highlight {
+  color: var(--color-accent, #0d9488);
 }
 
 .empty-state {
@@ -2370,6 +2497,7 @@ body.top-sidebar-open .top-sidebar {
   overflow: hidden;
   text-overflow: ellipsis;
   color: #000000;
+  min-width: 0;
 }
 
 .prepare-placed-field-inline-input {
@@ -2378,7 +2506,7 @@ body.top-sidebar-open .top-sidebar {
   border: none;
   background: transparent;
   outline: none;
-  font-size: 0.875rem;
+  font-size: inherit;
   color: #000000;
   padding: 0;
   margin: 0;
@@ -4464,6 +4592,8 @@ body.top-sidebar-open .top-sidebar {
   padding: 0;
   display: flex;
   align-items: stretch;
+  min-width: 0;
+  overflow: hidden;
 }
 
 /* Hidden span used to measure text width so the field can grow with content */
@@ -4485,17 +4615,20 @@ body.top-sidebar-open .top-sidebar {
   width: 100%;
   height: 100%;
   min-height: 0;
+  min-width: 0;
   padding: 0.25rem 0.5rem;
   border: none;
   border-radius: 4px;
   font: inherit;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  font-size: 0.875rem;
+  font-size: inherit;
   font-weight: 400;
   color: #1f2937;
   background: #faf5ff;
   box-sizing: border-box;
   outline: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .signing-field-text-input::placeholder {
@@ -4615,24 +4748,26 @@ body.top-sidebar-open .top-sidebar {
 }
 
 /* Unsigned: purple box with "Sign" + pencil – always visible */
-.signing-field-block.unsigned {
+/* .signing-field-block.unsigned {
   background: #5b21b6;
   border-radius: 6px;
   box-shadow: 0 2px 6px rgba(91, 33, 182, 0.35);
-}
+} */
 
 .signing-field-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  justify-content: center;
+  gap: 0.25rem;
   width: 100%;
   height: 100%;
-  padding: 0 0.6rem;
+  min-width: 0;
+  padding: 0 0.4rem;
   border: none;
   background: var(--color-accent);
   color: var(--color-text-inverse);
   font-weight: 700;
-  font-size: 0.95rem;
+  font-size: inherit;
   cursor: pointer;
   border-radius: 6px;
   transition: background 0.15s, filter 0.15s;
@@ -4643,8 +4778,8 @@ body.top-sidebar-open .top-sidebar {
   filter: brightness(1.08);
 }
 
-.signing-field-label { font-size: 0.95rem; }
-.signing-field-icon { font-size: 1.05rem; opacity: 0.95; }
+.signing-field-label { font-size: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.signing-field-icon { font-size: inherit; opacity: 0.95; flex-shrink: 0; }
 
 /* Note: sender message (not on document) */
 .signing-field-note-block {
@@ -4657,10 +4792,12 @@ body.top-sidebar-open .top-sidebar {
   overflow: auto;
 }
 .signing-field-note-content {
-  font-size: 0.85rem;
+  font-size: inherit;
   color: #1f2937;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: break-word;
+  min-width: 0;
 }
 
 /* Approve / Decline (DocuSign-style) */
@@ -6919,11 +7056,14 @@ body.top-sidebar-open .top-sidebar {
   .prepare-center {
     padding: 0.5rem;
     min-height: 200px;
+    min-width: 0;
   }
 
   .prepare-doc-canvas {
     width: 100%;
     max-width: 100%;
+    min-width: 0;
+    padding: 0.5rem;
   }
 
   .prepare-pdf-wrap .pdf-viewer {
@@ -7666,6 +7806,11 @@ body.top-sidebar-open .top-sidebar {
 
   .agreements-content {
     overflow-x: visible;
+    min-width: 0;
+  }
+
+  .agreements-table {
+    min-width: 0;
   }
 
   .agreements-table-head {
@@ -7764,6 +7909,45 @@ body.top-sidebar-open .top-sidebar {
     flex-shrink: 0;
   }
 
+  /* Users table – different columns: Name, Email, Role, Created */
+  .users-table .agreements-row {
+    grid-template-columns: 1fr;
+  }
+  .users-table .agreements-col-name { grid-column: 1 / -1; grid-row: 1; }
+  .users-table .agreements-col-status { grid-column: 1 / -1; }
+  .users-table .agreements-col-status::before { content: "Email"; }
+  .users-table .agreements-col-last:nth-child(3)::before { content: "Role"; }
+  .users-table .agreements-col-last:nth-child(4)::before { content: "Created"; }
+  .users-table .agreements-col-actions { grid-column: 1 / -1; }
+
+  /* User requests table – Email, Status, Requested */
+  .user-requests-table .agreements-row {
+    grid-template-columns: 1fr;
+  }
+  .user-requests-table .agreements-col-name { grid-column: 1 / -1; grid-row: 1; }
+  .user-requests-table .agreements-col-name::before {
+    content: "Email";
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.25rem;
+  }
+  .user-requests-table .agreements-col-last:nth-child(2)::before { content: "Status"; }
+  .user-requests-table .agreements-col-last:nth-child(3)::before { content: "Requested"; }
+  .user-requests-table .agreements-col-actions { grid-column: 1 / -1; }
+
+  /* Templates table – Recipients column label */
+  .templates-table .agreements-col-status::before { content: "Recipients"; }
+
+  /* Hide redundant recipients column on mobile (shown in sub under name) */
+  .templates-table .agreements-col-status.templates-col-recipients .agreements-recipients-line {
+    white-space: normal;
+    word-break: break-word;
+  }
+
   .signing-review-header {
     flex-wrap: wrap;
     gap: 0.5rem 0.75rem;
@@ -7797,6 +7981,32 @@ body.top-sidebar-open .top-sidebar {
     overflow-x: auto;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+  }
+
+  .signing-doc-canvas-prepare-style {
+    padding: 0.5rem;
+    min-width: 0;
+  }
+
+  /* Placement fields – responsive text and truncation */
+  .signing-field-block {
+    min-width: 0;
+  }
+  .signing-field-text-input {
+    padding: 0.2rem 0.4rem;
+  }
+  .signing-field-btn {
+    padding: 0 0.3rem;
+    gap: 0.2rem;
+  }
+  .signing-field-dropdown-select {
+    padding: 0.2rem 0.4rem;
+  }
+  .signing-field-checkbox-caption,
+  .signing-field-radio-option span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .signing-pdf-wrap {
@@ -7846,6 +8056,97 @@ body.top-sidebar-open .top-sidebar {
 
   .top-main {
     padding: 1rem 0.75rem 1.5rem;
+  }
+
+  /* Pagination – stack on tablet */
+  .agreements-pagination {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    row-gap: 0.5rem;
+  }
+  .agreements-pagination-summary {
+    width: 100%;
+    flex-basis: 100%;
+  }
+  .agreements-pagination-controls {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  /* Card list – allow 2 columns on larger phones */
+  .card-list {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  }
+
+  /* Doc cards – ensure text wraps and doesn't overflow */
+  .doc-card h3 {
+    word-break: break-word;
+    overflow-wrap: break-word;
+  }
+  .doc-meta {
+    word-break: break-word;
+  }
+
+  /* Agreements sidebar nav – horizontal scroll on mobile */
+  .agreements-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .agreements-nav-group {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .agreements-nav-sub {
+    padding-left: 0.65rem;
+  }
+
+  /* Modals – full width with margin on mobile */
+  .adopt-modal {
+    max-width: calc(100vw - 2rem);
+    margin: 1rem;
+  }
+  .adopt-modal-fields {
+    grid-template-columns: 1fr;
+  }
+  .resend-modal {
+    max-width: calc(100vw - 2rem);
+    margin: 1rem;
+  }
+  .resend-modal-row {
+    grid-template-columns: 1fr;
+  }
+  .use-template-modal {
+    max-width: calc(100vw - 2rem);
+    margin: 1rem;
+  }
+  .use-template-recipient-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* Prepare edit values table – horizontal scroll on tablet */
+  .prepare-edit-values-modal {
+    max-width: calc(100vw - 2rem);
+    margin: 1rem;
+  }
+  .prepare-edit-values-table {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .prepare-edit-values-row {
+    grid-template-columns: 1fr 1fr min-content;
+    min-width: 200px;
+  }
+
+  /* Doc detail – ensure sidebar sections stack cleanly */
+  .doc-detail-main h1 {
+    font-size: 1.25rem;
+    word-break: break-word;
+  }
+  .signer-list,
+  .audit-list {
+    flex-direction: column;
   }
 
   .profile-body {
@@ -8034,5 +8335,45 @@ body.top-sidebar-open .top-sidebar {
 
   .profile-title {
     font-size: 1.5rem;
+  }
+
+  /* Card list – single column on very small screens */
+  .card-list {
+    grid-template-columns: 1fr;
+  }
+
+  /* Pagination – more compact */
+  .agreements-pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .agreements-pagination-summary {
+    text-align: center;
+  }
+  .agreements-pagination-controls {
+    justify-content: center;
+  }
+
+  /* Agreements header – stack title and actions */
+  .agreements-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  /* Ensure content area respects viewport */
+  .agreements-content {
+    min-width: 0;
+  }
+
+  /* Template view – compact on mobile */
+  .template-view-shell {
+    padding: 0.75rem;
+  }
+  .template-view-header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .template-view-title {
+    font-size: 1.15rem;
   }
 }

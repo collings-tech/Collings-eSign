@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { useAuth } from '../auth/AuthContext.jsx';
@@ -19,6 +19,10 @@ export default function LoginPage() {
   const [newPassword, setNewPassword] = useState('');
   const [retypePassword, setRetypePassword] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+
+  useEffect(() => {
+    apiClient.get('/auth/ensure-default-admin').catch(() => {});
+  }, []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();

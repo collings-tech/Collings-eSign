@@ -43,6 +43,8 @@ export default function SigningPage() {
   const containerRef = useRef(null);
   const pdfInnerRef = useRef(null);
   const [editingDateFieldId, setEditingDateFieldId] = useState(null);
+  /** Available width for PDF – use viewport so document fits on mobile */
+  const [availableWidth, setAvailableWidth] = useState(800);
 
   const fetchInfo = useCallback(async () => {
     setLinkExpired(false);
@@ -133,6 +135,22 @@ export default function SigningPage() {
     }
     fetchFileUrl();
   }, [info, fetchFileUrl, fileUrl]);
+
+  /** Use viewport width so PDF fits on screen on mobile */
+  useEffect(() => {
+    const updateWidth = () => {
+      const vw = typeof window !== "undefined" ? (window.visualViewport?.width ?? window.innerWidth) : 800;
+      const w = Math.min(800, Math.max(280, vw - 48));
+      setAvailableWidth(w);
+    };
+    updateWidth();
+    window.visualViewport?.addEventListener("resize", updateWidth);
+    window.addEventListener("resize", updateWidth);
+    return () => {
+      window.visualViewport?.removeEventListener("resize", updateWidth);
+      window.removeEventListener("resize", updateWidth);
+    };
+  }, []);
 
   // ResizeObserver must run at top level (same hook order every render)
   const showDoc = !!info;
@@ -427,9 +445,13 @@ export default function SigningPage() {
     Gray: "#6b7280",
     "Dark Gray": "#374151",
   };
+  /** Scale factor for placement text – scales with viewport so fonts fit on mobile */
+  const fontScale = Math.max(0.5, Math.min(1, availableWidth / 800));
+
   /** Build inline style for text/data input fields from the field's formatting tool settings. */
   const getTextFieldFormatStyle = (f) => {
-    const fontSize = Math.max(6, Math.min(24, Number(f.fontSize) || 14));
+    const baseSize = Math.max(6, Math.min(24, Number(f.fontSize) || 14));
+    const fontSize = Math.max(8, Math.round(baseSize * fontScale));
     const fontFamily = (f.fontFamily && f.fontFamily.trim()) ? f.fontFamily.trim() : "Lucida Console";
     const color = FONT_COLOR_MAP[f.fontColor] ?? (f.fontColor && /^#|[a-z]/.test(f.fontColor) ? f.fontColor : "#000000");
     return {
@@ -492,7 +514,7 @@ export default function SigningPage() {
               >
                 <div className="prepare-pdf-wrap">
                   {fileUrl ? (
-                    <PdfMainView fileUrl={fileUrl} fixedPageWidth={Math.round(800 * (zoom / 100))} />
+                    <PdfMainView fileUrl={fileUrl} fixedPageWidth={Math.round(availableWidth * (zoom / 100))} />
                   ) : fileUrlLoading ? (
                     <div className="signing-loading" role="status" aria-live="polite">Loading PDF…</div>
                   ) : fileUrlError ? (
@@ -641,7 +663,7 @@ export default function SigningPage() {
                     <PdfMainView
                       key={isSigned ? `signed-${doc?.id}-${fileUrl}` : `draft-${fileUrl}`}
                       fileUrl={fileUrl}
-                      fixedPageWidth={Math.round(800 * scale)}
+                      fixedPageWidth={Math.round(availableWidth * scale)}
                       renderPageOverlay={!isSigned ? (pageNum) => {
                         const pageFields = fields.filter((f) => (f.page ?? 1) === pageNum);
                         return pageFields.map((f) => {
@@ -660,7 +682,7 @@ export default function SigningPage() {
                         const noteText = (f.noteContent ?? "").trim();
                         if (!noteText) return null;
                         const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 40;
-                        const dynamicNoteFontSize = Math.max(10, Math.min(16, boxHeightPx * 0.25));
+                        const dynamicNoteFontSize = Math.max(8, Math.round(Math.max(10, Math.min(16, boxHeightPx * 0.25)) * fontScale));
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -679,7 +701,7 @@ export default function SigningPage() {
                       }
                       if (typeLower === "approve") {
                         const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 36;
-                        const dynamicButtonFontSize = Math.max(12, Math.min(20, boxHeightPx * 0.4));
+                        const dynamicButtonFontSize = Math.max(8, Math.round(Math.max(12, Math.min(20, boxHeightPx * 0.4)) * fontScale));
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -707,7 +729,7 @@ export default function SigningPage() {
                       }
                       if (typeLower === "decline") {
                         const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 36;
-                        const dynamicButtonFontSize = Math.max(12, Math.min(20, boxHeightPx * 0.4));
+                        const dynamicButtonFontSize = Math.max(8, Math.round(Math.max(12, Math.min(20, boxHeightPx * 0.4)) * fontScale));
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -744,7 +766,9 @@ export default function SigningPage() {
                         if (!value) value = "";
                         const label = typeLower === "date" ? "Date signed" : typeLower === "name" ? (f.nameFormat ?? "Full Name") : typeLower.charAt(0).toUpperCase() + typeLower.slice(1);
                         const placeholderText = typeLower === "number" && f.placeholder ? f.placeholder : label;
-                        const dynamicFontSize = `${Math.max(0.5, Math.min(1.2, hPct * 0.15))}rem`;
+                        const baseRem = Math.max(0.5, Math.min(1.2, hPct * 0.15));
+                        const basePx = baseRem * 16;
+                        const dynamicFontSize = `${Math.max(8, Math.round(basePx * fontScale))}px`;
                         const textFormatStyle = { ...getTextFieldFormatStyle(f), fontSize: dynamicFontSize };
                         return (
                           <div
@@ -850,8 +874,8 @@ export default function SigningPage() {
                         const isChecked = valueStr === "Yes" || valueStr === "true";
                         const caption = (f.caption ?? "").trim() || "Checkbox";
                         const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 24;
-                        const dynamicCheckboxSize = Math.max(12, Math.min(20, boxHeightPx * 0.5));
-                        const dynamicCaptionSize = Math.max(10, Math.min(16, boxHeightPx * 0.45));
+                        const dynamicCheckboxSize = Math.max(10, Math.round(Math.max(12, Math.min(20, boxHeightPx * 0.5)) * fontScale));
+                        const dynamicCaptionSize = Math.max(8, Math.round(Math.max(10, Math.min(16, boxHeightPx * 0.45)) * fontScale));
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -894,8 +918,8 @@ export default function SigningPage() {
                         const valueStr = (typeof value === "string" ? value : String(value ?? "")).trim();
                         const selectedVal = valueStr && optionLabels.includes(valueStr) ? valueStr : "";
                         const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 24;
-                        const dynamicRadioSize = Math.max(12, Math.min(20, boxHeightPx * 0.5));
-                        const dynamicRadioTextSize = Math.max(10, Math.min(16, boxHeightPx * 0.45));
+                        const dynamicRadioSize = Math.max(10, Math.round(Math.max(12, Math.min(20, boxHeightPx * 0.5)) * fontScale));
+                        const dynamicRadioTextSize = Math.max(8, Math.round(Math.max(10, Math.min(16, boxHeightPx * 0.45)) * fontScale));
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -945,7 +969,7 @@ export default function SigningPage() {
                         const valueStr = (typeof value === "string" ? value : String(value ?? "")).trim();
                         const valueToShow = valueStr && optionLabels.includes(valueStr) ? valueStr : "";
                         const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 28;
-                        const dynamicDropdownFontSize = Math.max(10, Math.min(18, boxHeightPx * 0.45));
+                        const dynamicDropdownFontSize = Math.max(8, Math.round(Math.max(10, Math.min(18, boxHeightPx * 0.45)) * fontScale));
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -989,9 +1013,9 @@ export default function SigningPage() {
                       const fieldSignature = fieldSignatureData[f.id] || (Object.keys(fieldSignatureData).length === 0 ? signatureData : null);
                       const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 36;
                       const showSignedBy = boxHeightPx >= 45;
-                      const dynamicFontSize = Math.max(12, Math.min(48, boxHeightPx * (showSignedBy ? 0.45 : 0.6)));
-                      const dynamicSignedBySize = Math.max(8, Math.min(14, boxHeightPx * 0.15));
-                      const dynamicIdSize = Math.max(6, Math.min(12, boxHeightPx * 0.12));
+                      const dynamicFontSize = Math.max(10, Math.round(Math.max(12, Math.min(48, boxHeightPx * (showSignedBy ? 0.45 : 0.6))) * fontScale));
+                      const dynamicSignedBySize = Math.max(6, Math.round(Math.max(8, Math.min(14, boxHeightPx * 0.15)) * fontScale));
+                      const dynamicIdSize = Math.max(5, Math.round(Math.max(6, Math.min(12, boxHeightPx * 0.12)) * fontScale));
                       return (
                         <div
                           key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -1032,7 +1056,7 @@ export default function SigningPage() {
                               className="signing-field-btn"
                               onClick={() => openSignModal(f.id)}
                               aria-label={isInitialField ? "Click to add initials" : "Click to sign"}
-                              style={{ fontSize: `${Math.max(12, boxHeightPx * 0.4)}px` }}
+                              style={{ fontSize: `${Math.max(8, Math.round(Math.max(12, boxHeightPx * 0.4) * fontScale))}px` }}
                             >
                               <span className="signing-field-label">{isInitialField ? "Initial" : "Sign"}</span>
                               <span className="signing-field-icon" aria-hidden><i className="lni lni-pen-to-square" aria-hidden /></span>

@@ -17,8 +17,10 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [agreements, setAgreements] = useState([]);
+  const [accountRequestsCount, setAccountRequestsCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const isAdmin = Array.isArray(user?.roles) && user.roles.includes("admin");
 
   useEffect(() => {
     apiClient
@@ -30,6 +32,14 @@ export default function DashboardPage() {
       })
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    apiClient
+      .get("/user-requests")
+      .then((res) => setAccountRequestsCount((res.data || []).length))
+      .catch(() => setAccountRequestsCount(0));
+  }, [isAdmin]);
 
   // Total = all agreements (owned + docs awaiting user's signature)
   const total = agreements.length;
@@ -49,7 +59,14 @@ export default function DashboardPage() {
       <section className="ds-hero">
         <div className="ds-hero-grid">
           <div>
-            <h1>Welcome{user?.name ? `, ${toPascalCase(user.name)}` : ""}</h1>
+            <h1>
+              Welcome{user?.name ? `, ${toPascalCase(user.name)}` : ""}
+              {Array.isArray(user?.roles) && user.roles.includes("admin") && (
+                <span className="status-pill status-admin" style={{ marginLeft: "0.6rem" }}>
+                  Admin
+                </span>
+              )}
+            </h1>
             <p>
               Send documents for signature, track progress, and review audit
               activity in one workspace.
@@ -74,7 +91,7 @@ export default function DashboardPage() {
         <div className="ds-section-header">
           <h2>Overview</h2>
         </div>
-        <div className="dashboard-stats">
+        <div className={`dashboard-stats ${isAdmin ? "dashboard-stats--five-cols" : ""}`}>
           <div className="stat-card">
             <span className="stat-label">Total docs</span>
             <span className="stat-value">{total}</span>
@@ -91,6 +108,14 @@ export default function DashboardPage() {
             <span className="stat-label">Completed</span>
             <span className="stat-value">{completed}</span>
           </div>
+          {isAdmin && (
+            <Link to="/user-requests" className="stat-card stat-card-link">
+              <span className="stat-label">Account requests</span>
+              <span className={`stat-value ${accountRequestsCount > 0 ? "stat-value-highlight" : ""}`}>
+                {accountRequestsCount}
+              </span>
+            </Link>
+          )}
         </div>
       </section>
 

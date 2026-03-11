@@ -43,6 +43,7 @@ export default function TopNavLayout({ children }) {
   const isAgreements =
     path.startsWith("/agreements") || path.startsWith("/documents/");
   const isTemplates = path.startsWith("/templates");
+  const isUserRequests = path.startsWith("/user-requests");
 
   const navLinks = (
     <>
@@ -55,7 +56,16 @@ export default function TopNavLayout({ children }) {
       <Link to="/templates" className={`top-nav-link ${isTemplates ? "active" : ""}`.trim()} onClick={closeSidebar}>
         Templates
       </Link>
-      <span className="top-nav-link muted-link" aria-current="false">Reports</span>
+      {Array.isArray(user?.roles) && user.roles.includes("admin") && (
+        <>
+          <Link to="/users" className={`top-nav-link ${path.startsWith("/users") ? "active" : ""}`.trim()} onClick={closeSidebar}>
+            Users
+          </Link>
+          <Link to="/user-requests" className={`top-nav-link ${isUserRequests ? "active" : ""}`.trim()} onClick={closeSidebar}>
+            Account Requests
+          </Link>
+        </>
+      )}
     </>
   );
 
@@ -120,7 +130,6 @@ export default function TopNavLayout({ children }) {
               </div>
               <div className="top-header-user-menu-sep" aria-hidden="true" />
               <div className="top-header-user-menu-links" role="none">
-                <span className="top-header-user-menu-link muted-link" role="menuitem" tabIndex={0}>My Preferences</span>
                 <button type="button" className="top-header-user-menu-link top-header-user-menu-logout" role="menuitem" onClick={handleLogout}>
                   Log Out
                 </button>

@@ -9,5 +9,8 @@ module.exports = {
   jwtSecret: process.env.JWT_SECRET || 'dev_secret_change_me',
   uploadDir: process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', 'uploads'),
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+  defaultAdminEmail: process.env.DEFAULT_ADMIN_EMAIL || '',
+  defaultAdminPassword: process.env.DEFAULT_ADMIN_PASSWORD || '',
+  defaultAdminName: process.env.DEFAULT_ADMIN_NAME || 'Default Admin',
 };
 

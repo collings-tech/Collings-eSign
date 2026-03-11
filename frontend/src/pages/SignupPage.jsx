@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { apiClient } from '../api/client';
 import { useAuth } from '../auth/AuthContext.jsx';
 import collingsLogo from '../assets/collings-logo-1.png';
@@ -7,6 +7,7 @@ import collingsLogo from '../assets/collings-logo-1.png';
 export default function SignupPage() {
   const { login } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [step, setStep] = useState(1);
   const [email, setEmail] = useState('');
@@ -16,11 +17,14 @@ export default function SignupPage() {
   const [password, setPassword] = useState('');
   const [retypePassword, setRetypePassword] = useState('');
   const [error, setError] = useState('');
+  const [awaitingApproval, setAwaitingApproval] = useState(false);
+  const [awaitingMessage, setAwaitingMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSendOtp = async (e) => {
     e.preventDefault();
     setError('');
+    setAwaitingApproval(false);
     setLoading(true);
     try {
       await apiClient.post('/auth/signup-send-otp', { email: email.trim() });
@@ -52,9 +56,19 @@ export default function SignupPage() {
     setError('');
     setLoading(true);
     try {
-      await apiClient.post('/auth/signup-verify-otp', { email: email.trim(), otp: otp.trim() });
-      setStep(3);
-      setOtp('');
+      const res = await apiClient.post('/auth/signup-verify-otp', { email: email.trim(), otp: otp.trim() });
+      if (res.data?.awaitingApproval) {
+        setAwaitingApproval(true);
+        setAwaitingMessage(res.data?.message || 'Your account request has been sent to an administrator for approval.');
+        setOtp('');
+      } else if (res.data?.accountExists) {
+        setAwaitingApproval(true);
+        setAwaitingMessage(res.data?.message || 'Your account already exists. Please log in.');
+        setOtp('');
+      } else {
+        setStep(3);
+        setOtp('');
+      }
     } catch (err) {
       setError(err.response?.data?.error || 'Invalid verification code');
     } finally {
@@ -96,6 +110,14 @@ export default function SignupPage() {
     setStep((s) => s - 1);
   };
 
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const emailParam = params.get('email');
+    if (emailParam) {
+      setEmail(emailParam);
+    }
+  }, [location.search]);
+
   return (
     <div className="auth-container">
       <div className="auth-card">
@@ -108,7 +130,21 @@ export default function SignupPage() {
         <h1>Create account</h1>
         {error && <div className="auth-error">{error}</div>}
 
-        {step === 1 && (
+        {awaitingApproval ? (
+          <div className="auth-form">
+            <div className="auth-success" style={{ marginBottom: '1rem' }}>
+              {awaitingMessage || 'Your account request has been sent to an administrator for approval.'}
+            </div>
+            {!awaitingMessage.includes('already exists') && (
+            <p className="auth-step-hint" style={{ marginBottom: '1rem' }}>
+              You will receive an email once your request is approved. Then you can log in using the temporary password in that email.
+            </p>
+            )}
+            <Link to="/login" className="primary-btn" style={{ display: 'inline-block', textAlign: 'center', textDecoration: 'none' }}>
+              Back to login
+            </Link>
+          </div>
+        ) : step === 1 ? (
           <form onSubmit={handleSendOtp} className="auth-form">
             <label>
               Email
@@ -125,9 +161,7 @@ export default function SignupPage() {
               {loading ? 'Sending…' : 'Send verification code'}
             </button>
           </form>
-        )}
-
-        {step === 2 && (
+        ) : step === 2 ? (
           <form onSubmit={handleVerifyOtp} className="auth-form">
             <p className="auth-step-hint">We sent a 6-digit code to {email}</p>
             <label>
@@ -156,9 +190,7 @@ export default function SignupPage() {
               </button>
             </div>
           </form>
-        )}
-
-        {step === 3 && (
+        ) : step === 3 ? (
           <form onSubmit={handleCompleteSignup} className="auth-form">
             <p className="auth-step-hint">Email verified: {email}</p>
             <label>
@@ -210,11 +242,13 @@ export default function SignupPage() {
               ← Back
             </button>
           </form>
-        )}
+        ) : null}
 
+        {!awaitingApproval && (
         <p className="auth-switch">
           Already have an account? <Link to="/login">Sign in</Link>
         </p>
+        )}
       </div>
     </div>
   );

@@ -253,6 +253,8 @@ function DocumentDetailPage() {
   const docCanvasRef = useRef(null);
   const prevZoomRef = useRef(zoom);
   const overlayRef = useRef(null);
+  /** Available width for PDF – use viewport to ensure it fits on mobile (canvas can inherit wrong width) */
+  const [availableWidth, setAvailableWidth] = useState(800);
 
   const FIELD_SIZE_LIMITS = { minW: 80, maxW: 400, minH: 24, maxH: 120 };
 
@@ -301,6 +303,22 @@ function DocumentDetailPage() {
     const next = computePagePlacementMeasurement(scale);
     setPagePlacementMeasurement(next);
   }, [zoom, documentFileUrl, documentFileKey, pdfPageCount]);
+
+  /** Use viewport width so PDF fits on screen – viewport is reliable on mobile (canvas can inherit wrong width) */
+  useEffect(() => {
+    const updateWidth = () => {
+      const vw = typeof window !== "undefined" ? (window.visualViewport?.width ?? window.innerWidth) : 800;
+      const w = Math.min(800, Math.max(280, vw - 48));
+      setAvailableWidth(w);
+    };
+    updateWidth();
+    window.visualViewport?.addEventListener("resize", updateWidth);
+    window.addEventListener("resize", updateWidth);
+    return () => {
+      window.visualViewport?.removeEventListener("resize", updateWidth);
+      window.removeEventListener("resize", updateWidth);
+    };
+  }, []);
 
   /** Measure all PDF page positions/sizes. Uses cached measurement so zoom changes don't read stale DOM during render. */
   const getPagePlacementMeasurement = useCallback(() => {
@@ -1559,7 +1577,7 @@ function DocumentDetailPage() {
                     {fileUrl ? (
                       <PdfMainView
                         fileUrl={fileUrl}
-                        fixedPageWidth={Math.round(800 * scale)}
+                        fixedPageWidth={Math.round(availableWidth * scale)}
                         pageRotations={pageRotations}
                         currentPage={currentPage}
                         onPageCount={setPdfPageCount}
@@ -1599,7 +1617,9 @@ function DocumentDetailPage() {
                                 const yPct = f.yPct != null ? f.yPct : 10;
                                 const wPct = f.wPct != null ? f.wPct : 14;
                                 const hPct = f.hPct != null ? f.hPct : 6;
-                                const dynamicFontSize = `${Math.max(0.5, Math.min(1.2, hPct * 0.15))}rem`;
+                                const fontScale = Math.max(0.5, Math.min(1, availableWidth / 800));
+                                const baseRem = Math.max(0.5, Math.min(1.2, hPct * 0.15));
+                                const dynamicFontSize = `${Math.max(8, Math.round(baseRem * 16 * fontScale))}px`;
                                 return (
                                   <div
                                     key={f.id}

@@ -9,6 +9,8 @@ const authRoutes = require('./routes/auth.routes');
 const documentsRoutes = require('./routes/documents.routes');
 const signRequestsRoutes = require('./routes/signRequests.routes');
 const signingRoutes = require('./routes/signing.routes');
+const signupRequestsRoutes = require('./routes/signupRequests.routes');
+const usersRoutes = require('./routes/users.routes');
 
 const app = express();
 
@@ -34,6 +36,8 @@ app.use('/auth', authRoutes);
 app.use('/documents', documentsRoutes);
 app.use('/sign-requests', signRequestsRoutes);
 app.use('/signing', signingRoutes);
+app.use('/user-requests', signupRequestsRoutes);
+app.use('/users', usersRoutes);
 
 // Basic healthcheck
 app.get('/health', (req, res) => {
