@@ -8,6 +8,82 @@ pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.vers
 const MAIN_PAGE_WIDTH = 800;
 
 /**
+ * Renders a single PDF page only when it is near the viewport.
+ * The outer wrapper div is always in the DOM so pageRefs / scrollIntoView
+ * keep working even before the page has loaded.
+ */
+function LazyPage({
+  pageNum,
+  pageWidth,
+  rotation,
+  renderPageOverlay,
+  wrapperRef,
+}) {
+  const [loaded, setLoaded] = useState(false);
+  const innerRef = useRef(null);
+
+  useEffect(() => {
+    const el = innerRef.current;
+    if (!el) return;
+    // 400px margin: start loading before the page is fully on screen
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setLoaded(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: "400px 0px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Estimate A4 portrait height as placeholder to keep scroll positions stable.
+  // Once the real page loads this collapses to the true height.
+  const placeholderHeight = Math.round(pageWidth * 1.414);
+
+  return (
+    <div
+      ref={(el) => {
+        // Expose both the outer ref (for scroll-to-page) and inner ref (for observer)
+        if (wrapperRef) wrapperRef(el);
+        innerRef.current = el;
+      }}
+    >
+      {loaded ? (
+        <>
+          <Page
+            pageNumber={pageNum}
+            width={pageWidth}
+            rotate={rotation}
+            renderTextLayer={true}
+            renderAnnotationLayer={false}
+          />
+          {renderPageOverlay && (
+            <div
+              className="pdf-page-overlay"
+              style={{ position: "absolute", inset: 0, zIndex: 10 }}
+            >
+              {renderPageOverlay(pageNum)}
+            </div>
+          )}
+        </>
+      ) : (
+        <div
+          style={{
+            width: pageWidth,
+            height: placeholderHeight,
+            background: "var(--color-bg-nav, #f5f5f5)",
+            borderRadius: 4,
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
  * PdfMainView renders PDF pages. Each page is wrapped in a PageWrapper (position: relative)
  * with an optional OverlayLayer (position: absolute; inset: 0) so fields can be positioned
  * with percentages relative to that page. This survives zoom, mobile, and resizing.
@@ -72,7 +148,11 @@ export default function PdfMainView({
       <Document
         file={fileUrl}
         onLoadSuccess={onLoadSuccess}
-        loading={<span className="prepare-thumb-loading">Loading…</span>}
+        loading={
+          <div className="pdf-main-loading">
+            <div className="pdf-main-spinner" />
+          </div>
+        }
         error={<span className="prepare-thumb-error">Failed to load PDF</span>}
       >
         {numPages != null &&
@@ -82,22 +162,16 @@ export default function PdfMainView({
             return (
               <div
                 key={pageNum}
-                ref={(el) => { pageRefs.current[pageNum] = el; }}
                 data-rp={`page-${pageNum}`}
                 className="pdf-main-view-page pdf-page-wrapper"
               >
-                <Page
-                  pageNumber={pageNum}
-                  width={pageWidth}
-                  rotate={rotation}
-                  renderTextLayer={true}
-                  renderAnnotationLayer={false}
+                <LazyPage
+                  pageNum={pageNum}
+                  pageWidth={pageWidth}
+                  rotation={rotation}
+                  renderPageOverlay={renderPageOverlay}
+                  wrapperRef={(el) => { pageRefs.current[pageNum] = el; }}
                 />
-                {renderPageOverlay && (
-                  <div className="pdf-page-overlay" style={{ position: "absolute", inset: 0, zIndex: 10 }}>
-                    {renderPageOverlay(pageNum)}
-                  </div>
-                )}
               </div>
             );
           })}

@@ -516,7 +516,9 @@ button:disabled {
 /* When document prepare view is open: lock height so only center scrolls */
 .top-shell:has(.prepare-shell) {
   height: 100vh;
+  height: 100dvh;
   max-height: 100vh;
+  max-height: 100dvh;
   overflow: hidden;
 }
 
@@ -1898,13 +1900,14 @@ body.top-sidebar-open .top-sidebar {
   border-radius: 0;
   overflow: hidden;
   border: 1px solid var(--color-border);
-  background: var(--color-text);
 }
 
 /* Prepare document view (after Next - Collings eSign-style) */
 .prepare-shell {
   height: 100vh;
+  height: 100dvh;
   max-height: 100vh;
+  max-height: 100dvh;
   display: flex;
   flex-direction: column;
   background: var(--color-bg-nav);
@@ -2542,7 +2545,7 @@ body.top-sidebar-open .top-sidebar {
 .prepare-fields-fab {
   display: none;
   position: fixed;
-  bottom: 5rem;
+  bottom: 8rem;
   right: 1rem;
   z-index: 20;
   align-items: center;
@@ -2635,7 +2638,7 @@ body.top-sidebar-open .top-sidebar {
 .prepare-right-fab {
   display: none;
   position: fixed;
-  bottom: 5rem;
+  bottom: 8rem;
   left: 1rem;
   z-index: 20;
   align-items: center;
@@ -3115,6 +3118,27 @@ body.top-sidebar-open .top-sidebar {
   padding: 0.5rem;
 }
 
+.pdf-main-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 60vh;
+}
+
+.pdf-main-spinner {
+  width: 44px;
+  height: 44px;
+  border: 4px solid rgba(85, 197, 208, 0.2);
+  border-top-color: var(--color-primary, #55c5d0);
+  border-radius: 50%;
+  animation: pdf-spin 0.75s linear infinite;
+}
+
+@keyframes pdf-spin {
+  to { transform: rotate(360deg); }
+}
+
 .prepare-thumbnail-item {
   position: relative;
   border: 1px solid var(--color-border);
@@ -3168,6 +3192,7 @@ body.top-sidebar-open .top-sidebar {
   justify-content: flex-end;
   gap: 0.75rem;
   padding: 0.75rem 1rem;
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
   background: var(--color-bg-card);
   border-top: 1px solid var(--color-border);
 }
