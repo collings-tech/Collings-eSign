@@ -807,7 +807,7 @@ router.post('/:id/resend', requireAuth, async (req, res) => {
         }
       }
       const isOwnerSigner = signerEmail.toLowerCase() === ownerEmail;
-      if (!isOwnerSigner) {
+      if (!isOwnerSigner || !doc.signingOrder) {
         try {
           await sendDocuSignStyleSignEmail({
             signerEmail,
