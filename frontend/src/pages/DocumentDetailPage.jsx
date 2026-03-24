@@ -831,8 +831,10 @@ function DocumentDetailPage() {
   const handleBack = () => {
     if (isTemplateFlow) {
       navigate("/templates");
-    } else {
+    } else if (doc?.status === "draft") {
       navigate("/documents/new", { state: { editDocumentId: id } });
+    } else {
+      navigate("/agreements");
     }
   };
 
