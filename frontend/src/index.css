@@ -2459,13 +2459,30 @@ body.top-sidebar-open .top-sidebar {
   align-items: stretch;
   overflow: hidden;
 }
-/* Checkbox / Radio: compact – small square/circle + label inline */
-.prepare-placed-field-checkbox,
+/* Checkbox: full-area box preview – centered SVG square with no padding */
+.prepare-placed-field-checkbox {
+  padding: 0;
+  min-height: 0;
+  justify-content: center;
+}
+
+.prepare-placed-field-checkbox-preview {
+  width: 55%;
+  height: 55%;
+  min-width: 8px;
+  min-height: 8px;
+  max-width: 20px;
+  max-height: 20px;
+  display: block;
+  color: inherit;
+  pointer-events: none;
+}
+
+/* Radio: compact – circle + label inline */
 .prepare-placed-field-radio {
   padding: 0.15rem 0.35rem;
   min-height: 0;
 }
-.prepare-placed-field-checkbox .prepare-placed-field-icon,
 .prepare-placed-field-radio .prepare-placed-field-icon {
   font-size: 0.85rem;
 }
@@ -4353,6 +4370,8 @@ body.top-sidebar-open .top-sidebar {
 .signing-download-btn {
   text-decoration: none;
   display: inline-block;
+  border: none;
+  cursor: pointer;
 }
 .signing-download-btn:hover {
   color: var(--color-text-inverse);
@@ -4419,10 +4438,13 @@ body.top-sidebar-open .top-sidebar {
   padding: 0.5rem 1.25rem;
   background: #059669;
   color: #fff;
+  border: none;
   border-radius: 8px;
   font-weight: 600;
   text-decoration: none;
   cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
 }
 .signing-completed-download:hover {
   background: #047857;
@@ -4610,7 +4632,7 @@ body.top-sidebar-open .top-sidebar {
 .signing-field-text-block {
   position: relative;
   background: #ffffff;
-  border: 2px solid #7c3aed;
+  border: 1px solid var(--color-accent-hover);
   border-radius: 4px;
   box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
   padding: 0.15rem 0.4rem;
@@ -4654,6 +4676,9 @@ body.top-sidebar-open .top-sidebar {
   outline: none;
   overflow: hidden;
   text-overflow: ellipsis;
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .signing-field-text-input::placeholder {
@@ -4662,8 +4687,7 @@ body.top-sidebar-open .top-sidebar {
 }
 
 .signing-field-text-input:focus {
-  outline: 2px solid #7c3aed;
-  outline-offset: -2px;
+  outline: none;
 }
 
 .signing-field-readonly .signing-field-text-input,
@@ -4677,46 +4701,40 @@ body.top-sidebar-open .top-sidebar {
 .signing-field-checkbox-block {
   display: flex;
   align-items: center;
+  justify-content: center;
   background: #ffffff;
-  border: 2px solid #7c3aed;
-  border-radius: 4px;
-  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
-  padding: 0.1rem 0.3rem;
-  min-height: 0;
-}
-
-.signing-field-checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  width: 100%;
-  height: 100%;
+  border: 1px solid var(--color-accent-hover);
+  border-radius: 3px;
+  box-shadow: 0 1px 4px rgba(124, 58, 237, 0.18);
   padding: 0;
+  min-height: 0;
   cursor: pointer;
-  margin: 0;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.1s;
 }
 
-.signing-field-checkbox-input {
-  flex-shrink: 0;
-  width: 0.95rem;
-  height: 0.95rem;
-  accent-color: #7c3aed;
-  cursor: pointer;
+.signing-field-checkbox-block.is-checked {
+  background: #f5f0ff;
 }
 
-.signing-field-checkbox-caption {
-  font-size: 0.8rem;
-  color: #1f2937;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.signing-field-checkbox-block:focus-visible {
+  outline: 1px solid var(--color-accent-hover);
+  outline-offset: 1px;
+}
+
+.signing-field-checkbox-check {
+  width: 65%;
+  height: 65%;
+  display: block;
+  pointer-events: none;
 }
 
 .signing-field-radio-block {
   display: flex;
   align-items: center;
   background: #ffffff;
-  border: 2px solid #7c3aed;
+  border: 1px solid var(--color-accent-hover);
   border-radius: 4px;
   box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
   padding: 0.15rem 0.35rem;
@@ -4742,13 +4760,13 @@ body.top-sidebar-open .top-sidebar {
 .signing-field-radio-option input[type="radio"] {
   width: 0.95rem;
   height: 0.95rem;
-  accent-color: #7c3aed;
+  accent-color: var(--color-accent-hover);
   cursor: pointer;
 }
 
 .signing-field-dropdown-block {
   background: #ffffff;
-  border: 2px solid #7c3aed;
+  border: 2px solid var(--color-accent-hover);
   border-radius: 4px;
   box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
   padding: 0.15rem 0.4rem;
@@ -4768,8 +4786,8 @@ body.top-sidebar-open .top-sidebar {
 }
 
 .signing-field-dropdown-select:focus {
-  outline: 2px solid #7c3aed;
-  outline-offset: -2px;
+  outline: 1px solid var(--color-accent-hover);
+  outline-offset: -1px;
 }
 
 /* Unsigned: purple box with "Sign" + pencil – always visible */
@@ -8027,7 +8045,6 @@ body.top-sidebar-open .top-sidebar {
   .signing-field-dropdown-select {
     padding: 0.2rem 0.4rem;
   }
-  .signing-field-checkbox-caption,
   .signing-field-radio-option span {
     overflow: hidden;
     text-overflow: ellipsis;

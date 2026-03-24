@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { apiClient } from "../api/client";
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
 import PdfMainView from "../components/PdfMainView.jsx";
 import AdoptSignatureModal from "../components/AdoptSignatureModal.jsx";
 import DatePicker from "../components/DatePicker.jsx";
@@ -332,6 +334,10 @@ export default function SigningPage() {
     }
   };
 
+  const handleDownload = useCallback(() => {
+    window.location.href = `${API_BASE}/signing/${token}/download`;
+  }, [token]);
+
   const handleComplete = async () => {
     setCompleteError("");
     setCompleting(true);
@@ -620,15 +626,13 @@ export default function SigningPage() {
           <span className="signing-envelope-id">Envelope ID: {doc.id}</span>
           {isSigned ? (
             (fileUrl || completedFileUrl) ? (
-              <a
-                href={fileUrl || completedFileUrl}
-                download={doc?.title ? (doc.title.endsWith(".pdf") ? doc.title : `${doc.title}.pdf`) : "document.pdf"}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                type="button"
                 className="signing-complete-btn signing-download-btn"
+                onClick={handleDownload}
               >
                 Download
-              </a>
+              </button>
             ) : (
               <span className="signing-complete-btn signing-signed-label" style={{ cursor: "default", pointerEvents: "none" }} tabIndex={-1}>Signed</span>
             )
@@ -873,13 +877,10 @@ export default function SigningPage() {
                         const valueStr = (rawValue ?? defaultVal).toString().trim();
                         const isChecked = valueStr === "Yes" || valueStr === "true";
                         const caption = (f.caption ?? "").trim() || "Checkbox";
-                        const boxHeightPx = rh > 0 ? (hPct / 100) * rh : 24;
-                        const dynamicCheckboxSize = Math.max(10, Math.round(Math.max(12, Math.min(20, boxHeightPx * 0.5)) * fontScale));
-                        const dynamicCaptionSize = Math.max(8, Math.round(Math.max(10, Math.min(16, boxHeightPx * 0.45)) * fontScale));
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
-                            className="signing-field-block signing-field-checkbox-block"
+                            className={`signing-field-block signing-field-checkbox-block${isChecked ? " is-checked" : ""}`}
                             style={{
                               position: "absolute",
                               left: `${xPct}%`,
@@ -887,22 +888,29 @@ export default function SigningPage() {
                               width: `${wPct}%`,
                               height: `${hPct}%`,
                             }}
+                            role="checkbox"
+                            aria-checked={isChecked}
+                            aria-label={caption}
+                            tabIndex={0}
+                            onClick={() => {
+                              const v = isChecked ? "" : "Yes";
+                              setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: v }));
+                              saveFieldValue(fieldKey, v);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === " " || e.key === "Enter") {
+                                e.preventDefault();
+                                const v = isChecked ? "" : "Yes";
+                                setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: v }));
+                                saveFieldValue(fieldKey, v);
+                              }
+                            }}
                           >
-                            <label className="signing-field-checkbox-label">
-                              <input
-                                type="checkbox"
-                                className="signing-field-checkbox-input"
-                                checked={isChecked}
-                                onChange={(e) => {
-                                  const v = e.target.checked ? "Yes" : "";
-                                  setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: v }));
-                                  saveFieldValue(fieldKey, v);
-                                }}
-                                aria-label={caption}
-                                style={{ width: `${dynamicCheckboxSize}px`, height: `${dynamicCheckboxSize}px` }}
-                              />
-                              <span className="signing-field-checkbox-caption" style={{ fontSize: `${dynamicCaptionSize}px` }}>{caption}</span>
-                            </label>
+                            {isChecked && (
+                              <svg className="signing-field-checkbox-check" viewBox="0 0 12 10" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                <path d="M1 5L4.5 8.5L11 1.5" stroke="#7c3aed" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            )}
                           </div>
                         );
                       }
@@ -1110,12 +1118,12 @@ export default function SigningPage() {
             Comment
           </button>
           {(isSigned && (fileUrl || completedFileUrl)) ? (
-            <a href={fileUrl || completedFileUrl} download={doc?.title ? (doc.title.endsWith(".pdf") ? doc.title : `${doc.title}.pdf`) : "document.pdf"} target="_blank" rel="noopener noreferrer" className="signing-sidebar-item">
+            <button type="button" className="signing-sidebar-item" onClick={handleDownload}>
               <span className="signing-sidebar-icon" aria-hidden>
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
               </span>
               Download
-            </a>
+            </button>
           ) : isSigned ? (
             <span className="signing-sidebar-item">
               <span className="signing-sidebar-icon" aria-hidden>
@@ -1126,12 +1134,12 @@ export default function SigningPage() {
           ) : (
             <>
               {fileUrl ? (
-                <a href={fileUrl} download={doc?.title ? (doc.title.endsWith(".pdf") ? doc.title : `${doc.title}.pdf`) : "document.pdf"} target="_blank" rel="noopener noreferrer" className="signing-sidebar-item">
+                <button type="button" className="signing-sidebar-item" onClick={handleDownload}>
                   <span className="signing-sidebar-icon" aria-hidden>
                     <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
                   </span>
                   Download
-                </a>
+                </button>
               ) : (
                 <span className="signing-sidebar-item">
                   <span className="signing-sidebar-icon" aria-hidden>
@@ -1210,16 +1218,16 @@ onClick={() => setZoom((z) => Math.max(100, z - 25))}
                 : "You can download the document once the envelope is completed. We'll email you when all recipients have signed."}
             </p>
             {(fileUrl || completedFileUrl) ? (
-              <a
-                href={fileUrl || completedFileUrl}
-                download={doc?.title ? (doc.title.endsWith(".pdf") ? doc.title : `${doc.title}.pdf`) : "document.pdf"}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                type="button"
                 className="signing-completed-download"
-                onClick={() => setShowSigningCompletedMessage(false)}
+                onClick={() => {
+                  handleDownload();
+                  setShowSigningCompletedMessage(false);
+                }}
               >
                 Download signed document
-              </a>
+              </button>
             ) : null}
             <button type="button" className="signing-completed-dismiss" onClick={() => setShowSigningCompletedMessage(false)}>
               {(fileUrl || completedFileUrl) ? "Close" : "OK"}

@@ -1659,15 +1659,15 @@ function DocumentDetailPage() {
                                       }
                                     }}
                                   >
-                                    <span className="prepare-placed-field-icon" aria-hidden>{FIELD_ICONS[f.type] || "•"}</span>
+                                    {!isCheckboxField && <span className="prepare-placed-field-icon" aria-hidden>{FIELD_ICONS[f.type] || "•"}</span>}
                                     {isNoteField ? (
                                       <div className={`prepare-placed-field-note-content ${!(f.noteContent ?? "").trim() ? "is-placeholder" : ""}`}>
                                         {(f.noteContent ?? "").trim() || "Note for recipient"}
                                       </div>
                                     ) : isCheckboxField ? (
-                                      <span className="prepare-placed-field-label">
-                                        {(f.caption ?? "").trim() || "Checkbox"}
-                                      </span>
+                                      <svg className="prepare-placed-field-checkbox-preview" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                        <rect x="1" y="1" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="1.5"/>
+                                      </svg>
                                     ) : f.type === "Date Signed" && editingFieldId === f.id ? (
                                       <DatePicker
                                         value={f.defaultValue ?? ""}

@@ -209,16 +209,8 @@ export default function AgreementsPage() {
     if (token) navigate(`/sign/${token}`);
   };
 
-  const handleDownload = async (doc) => {
-    if (!doc.originalKey && !doc.originalFilePath) return;
-    try {
-      const res = await apiClient.get(`/documents/${doc._id}/file-url`);
-      if (res.data?.url) window.open(res.data.url, "_blank", "noopener");
-    } catch (err) {
-      console.error(err);
-      const file = doc.signedFilePath || doc.originalFilePath;
-      if (file) window.open(`${API_BASE}/uploads/${file}`, "_blank", "noopener");
-    }
+  const handleDownload = (doc) => {
+    window.location.href = `${API_BASE}/documents/${doc._id}/download`;
   };
 
   const handleTrash = async (doc) => {
