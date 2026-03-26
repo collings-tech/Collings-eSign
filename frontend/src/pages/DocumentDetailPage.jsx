@@ -441,10 +441,10 @@ function DocumentDetailPage() {
   const addField = useCallback((type, position) => {
     const recipientId = selectedRecipientId || signers[0]?._id;
     const defaultPage = 1;
-    const DATA_INPUT_COMPACT = ["Checkbox", "Radio"];
+    const DATA_INPUT_COMPACT = ["Radio"];
     const DATA_INPUT_RECTANGLE = ["Text", "Number", "Dropdown", "Name", "Email", "Company", "Title"];
-    const defWPct = DATA_INPUT_COMPACT.includes(type) ? 12 : DATA_INPUT_RECTANGLE.includes(type) ? 16 : 14;
-    const defHPct = DATA_INPUT_COMPACT.includes(type) ? 3 : DATA_INPUT_RECTANGLE.includes(type) ? 4 : 6;
+    const defWPct = type === "Checkbox" ? 2.3 : DATA_INPUT_COMPACT.includes(type) ? 12 : DATA_INPUT_RECTANGLE.includes(type) ? 16 : 14;
+    const defHPct = type === "Checkbox" ? 1.8 : DATA_INPUT_COMPACT.includes(type) ? 3 : DATA_INPUT_RECTANGLE.includes(type) ? 4 : 6;
     const base = {
       id: generateFieldId(),
       type,
@@ -502,12 +502,7 @@ function DocumentDetailPage() {
       newField = { ...newField, noteContent: "" };
     }
     if (type === "Date Signed") {
-      const today = new Date();
-      const day = String(today.getDate()).padStart(2, '0');
-      const month = String(today.getMonth() + 1).padStart(2, '0');
-      const year = today.getFullYear();
-      const australianDate = `${day}/${month}/${year}`;
-      newField = { ...newField, defaultValue: australianDate };
+      newField = { ...newField, defaultValue: "" };
     }
     setPlacedFields((prev) => [...prev, newField]);
     setSelectedFieldId(newField.id);
@@ -614,10 +609,23 @@ function DocumentDetailPage() {
     };
   }, [pendingFieldType, clientToPercentCoords]);
 
-  const DATA_INPUT_COMPACT = ["Checkbox", "Radio"];
+  /** Delete selected field with keyboard Delete or Backspace when no input is focused */
+  useEffect(() => {
+    const handleFieldDelete = (e) => {
+      if (e.key !== "Delete" && e.key !== "Backspace") return;
+      if (!selectedFieldId) return;
+      const tag = document.activeElement?.tagName?.toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      removeField(selectedFieldId);
+    };
+    window.addEventListener("keydown", handleFieldDelete);
+    return () => window.removeEventListener("keydown", handleFieldDelete);
+  }, [selectedFieldId, removeField]);
+
+  const DATA_INPUT_COMPACT = ["Radio"];
   const DATA_INPUT_RECTANGLE = ["Text", "Number", "Dropdown", "Name", "Email", "Company", "Title"];
-  const pendingWPct = DATA_INPUT_COMPACT.includes(pendingFieldType) ? 12 : DATA_INPUT_RECTANGLE.includes(pendingFieldType) ? 16 : 14;
-  const pendingHPct = DATA_INPUT_COMPACT.includes(pendingFieldType) ? 3 : DATA_INPUT_RECTANGLE.includes(pendingFieldType) ? 4 : (pendingFieldType === "Signature" || pendingFieldType === "Initial") ? 6 : 5;
+  const pendingWPct = pendingFieldType === "Checkbox" ? 2.3 : DATA_INPUT_COMPACT.includes(pendingFieldType) ? 12 : DATA_INPUT_RECTANGLE.includes(pendingFieldType) ? 16 : 14;
+  const pendingHPct = pendingFieldType === "Checkbox" ? 1.8 : DATA_INPUT_COMPACT.includes(pendingFieldType) ? 3 : DATA_INPUT_RECTANGLE.includes(pendingFieldType) ? 4 : (pendingFieldType === "Signature" || pendingFieldType === "Initial") ? 6 : 5;
 
   /** DocuSign-style: place field on document click when one is carried by cursor (center at click). Uses percent coords. */
   const handleDocumentPlaceClick = useCallback((e) => {
@@ -828,10 +836,18 @@ function DocumentDetailPage() {
     }
   };
 
-  const handleBack = () => {
+  const handleBack = async () => {
     if (isTemplateFlow) {
       navigate("/templates");
     } else if (doc?.status === "draft") {
+      // Save placed fields before going back so they're preserved when returning
+      try {
+        await apiClient.put(`/documents/${id}/signing-fields`, {
+          fields: placedFields.map(mapFieldToPayload),
+        });
+      } catch (err) {
+        console.error("Failed to auto-save fields on back:", err);
+      }
       navigate("/documents/new", { state: { editDocumentId: id } });
     } else {
       navigate("/agreements");
@@ -1276,6 +1292,14 @@ function DocumentDetailPage() {
 
   return (
     <TopNavLayout>
+      {sending && (
+        <div className="prepare-sending-overlay" aria-live="polite" aria-label="Sending document…">
+          <div className="prepare-sending-overlay-inner">
+            <div className="prepare-sending-spinner" />
+            <span className="prepare-sending-overlay-text">Sending…</span>
+          </div>
+        </div>
+      )}
       <div className={`prepare-shell ${sendSuccess != null ? "prepare-shell-sent" : ""}`}>
         {sendSuccess == null && (
         <header className="prepare-header">
@@ -1638,17 +1662,10 @@ function DocumentDetailPage() {
                                       borderColor: color.border,
                                       backgroundColor: color.bg,
                                     }}
-                                    title={isDataInputField ? (f.type === "Date Signed" ? "Click to select date" : "Double-click to enter default value") : undefined}
+                                    title={isDataInputField ? "Double-click to enter/edit value" : undefined}
                                     onPointerDown={(e) => handleFieldPointerDown(e, f)}
-                                    onClick={(e) => {
-                                      if (f.type === "Date Signed" && editingFieldId !== f.id) {
-                                        e.stopPropagation();
-                                        setEditingFieldId(f.id);
-                                        setSelectedFieldId(f.id);
-                                      }
-                                    }}
                                     onDoubleClick={(e) => {
-                                      if (["Name", "Email", "Company", "Title", "Text", "Number"].includes(f.type)) {
+                                      if (["Date Signed", "Name", "Email", "Company", "Title", "Text", "Number"].includes(f.type)) {
                                         e.stopPropagation();
                                         setEditingFieldId(f.id);
                                         setSelectedFieldId(f.id);
@@ -1840,10 +1857,15 @@ function DocumentDetailPage() {
                     />
                   </label>
                 )}
-                <label className="prepare-property-row prepare-property-check">
+                <label
+                  className="prepare-property-row prepare-property-check"
+                  title={selectedField.readOnly ? "Read Only fields cannot be required — the signee cannot edit them" : undefined}
+                  style={selectedField.readOnly ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+                >
                   <input
                     type="checkbox"
                     checked={selectedField.required}
+                    disabled={selectedField.readOnly}
                     onChange={(e) => updateField(selectedField.id, { required: e.target.checked })}
                   />
                   <span>Required Field</span>
@@ -1853,7 +1875,13 @@ function DocumentDetailPage() {
                     <input
                       type="checkbox"
                       checked={selectedField.readOnly}
-                      onChange={(e) => updateField(selectedField.id, { readOnly: e.target.checked })}
+                      onChange={(e) => {
+                        const isNowReadOnly = e.target.checked;
+                        updateField(selectedField.id, {
+                          readOnly: isNowReadOnly,
+                          ...(isNowReadOnly ? { required: false } : {}),
+                        });
+                      }}
                     />
                     <span>Read Only</span>
                   </label>
@@ -2396,10 +2424,15 @@ function DocumentDetailPage() {
                     />
                   </label>
                 )}
-                <label className="prepare-property-row prepare-property-check">
+                <label
+                  className="prepare-property-row prepare-property-check"
+                  title={selectedField.readOnly ? "Read Only fields cannot be required — the signee cannot edit them" : undefined}
+                  style={selectedField.readOnly ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+                >
                   <input
                     type="checkbox"
                     checked={selectedField.required}
+                    disabled={selectedField.readOnly}
                     onChange={(e) => updateField(selectedField.id, { required: e.target.checked })}
                   />
                   <span>Required Field</span>
@@ -2409,7 +2442,13 @@ function DocumentDetailPage() {
                     <input
                       type="checkbox"
                       checked={selectedField.readOnly}
-                      onChange={(e) => updateField(selectedField.id, { readOnly: e.target.checked })}
+                      onChange={(e) => {
+                        const isNowReadOnly = e.target.checked;
+                        updateField(selectedField.id, {
+                          readOnly: isNowReadOnly,
+                          ...(isNowReadOnly ? { required: false } : {}),
+                        });
+                      }}
                     />
                     <span>Read Only</span>
                   </label>

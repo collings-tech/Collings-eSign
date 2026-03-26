@@ -5,7 +5,7 @@ const Document = require("../models/Document");
 const SignRequest = require("../models/SignRequest");
 const User = require("../models/User");
 const { logEvent } = require("./audit.service");
-const { sendSignRequestEmail, sendDocuSignStyleSignEmail, sendDocumentCompletedEmail, sendSignedWaitingForOthersEmail, sendSignedDocumentToSender } = require("./email.service");
+const { sendSignRequestEmail, sendDocuSignStyleSignEmail, sendDocumentCompletedEmail, sendSignedWaitingForOthersEmail, sendSignedDocumentToSender, sendSignedDocumentToRecipient } = require("./email.service");
 const { embedSignatureInPdf, applyVoidWatermark } = require("./pdfSign.service");
 const storageService = require("./storage.service");
 const { uploadDir } = require("../config/env");
@@ -132,7 +132,7 @@ async function completeSigning({ token, ip, userAgent }) {
     throw new Error("Document not found");
   }
 
-  let signedResult;
+  let signedResult; // { key, buffer }
   try {
     signedResult = await embedSignatureInPdf(doc, signRequest);
   } catch (err) {
@@ -141,10 +141,10 @@ async function completeSigning({ token, ip, userAgent }) {
   }
 
   const update = {};
-  if (signedResult.startsWith("documents/")) {
-    update.signedKey = signedResult;
+  if (signedResult.key.startsWith("documents/")) {
+    update.signedKey = signedResult.key;
   } else {
-    update.signedFilePath = signedResult;
+    update.signedFilePath = signedResult.key;
   }
   await Document.findByIdAndUpdate(signRequest.documentId, update);
 
@@ -179,43 +179,66 @@ async function completeSigning({ token, ip, userAgent }) {
       status: "completed",
       signedAt: new Date(),
     });
-    // Email the completed document to ALL recipients only when envelope is fully complete
-    const allForDoc = await SignRequest.find({
-      documentId: signRequest.documentId,
-    }).lean();
-    try {
+    const allForDoc = await SignRequest.find({ documentId: signRequest.documentId }).lean();
+    const owner = await User.findById(doc.ownerId).lean();
+    const fileName = (documentTitle.endsWith(".pdf") ? documentTitle : `${documentTitle}.pdf`);
+
+    // Use the PDF bytes generated in-memory by the last embedSignatureInPdf call.
+    // This avoids Supabase CDN caching issues where a re-download could return a stale version.
+    const pdfBuffer = signedResult.buffer || null;
+    console.log("[signing] Using in-memory PDF buffer for email attachment, size:", pdfBuffer?.length);
+
+    // Send PDF attachment to every signer
+    if (pdfBuffer) {
+      const signerEmails = new Set();
       for (const sr of allForDoc) {
-        await sendDocumentCompletedEmail({
-          to: sr.signerEmail,
-          recipientName: sr.signerName,
-          token: sr.signLinkToken,
-          documentTitle,
-        });
-      }
-    } catch (err) {
-      console.error("[signing] sendDocumentCompletedEmail to all failed", err);
-    }
-    // Email the signed document (with attachment) to the sender (document owner)
-    try {
-      const owner = await User.findById(doc.ownerId).lean();
-      if (owner?.email) {
-        let pdfBuffer;
-        if (signedResult.startsWith("documents/") && storageService.isStorageConfigured()) {
-          pdfBuffer = await storageService.download(signedResult);
-        } else {
-          pdfBuffer = await fs.readFile(path.join(uploadDir, signedResult));
+        const email = (sr.signerEmail || "").toLowerCase();
+        if (!email || signerEmails.has(email)) continue;
+        signerEmails.add(email);
+        try {
+          await sendSignedDocumentToRecipient({
+            to: sr.signerEmail,
+            recipientName: sr.signerName,
+            documentTitle,
+            pdfBuffer,
+            fileName,
+          });
+        } catch (err) {
+          console.error("[signing] Failed to send signed PDF to recipient", sr.signerEmail, err);
         }
-        const fileName = (documentTitle.endsWith(".pdf") ? documentTitle : `${documentTitle}.pdf`);
-        await sendSignedDocumentToSender({
-          to: owner.email,
-          senderName: owner.name || owner.email,
-          documentTitle,
-          pdfBuffer,
-          fileName,
-        });
       }
-    } catch (err) {
-      console.error("[signing] sendSignedDocumentToSender failed", err);
+
+      // Send PDF attachment to the document owner (if not already a signer)
+      if (owner?.email) {
+        const ownerEmailLower = owner.email.toLowerCase();
+        if (!signerEmails.has(ownerEmailLower)) {
+          try {
+            await sendSignedDocumentToSender({
+              to: owner.email,
+              senderName: owner.name || owner.email,
+              documentTitle,
+              pdfBuffer,
+              fileName,
+            });
+          } catch (err) {
+            console.error("[signing] sendSignedDocumentToSender failed", err);
+          }
+        }
+      }
+    } else {
+      // Fallback: PDF unavailable — send link-only notification to all signers
+      for (const sr of allForDoc) {
+        try {
+          await sendDocumentCompletedEmail({
+            to: sr.signerEmail,
+            recipientName: sr.signerName,
+            token: sr.signLinkToken,
+            documentTitle,
+          });
+        } catch (err) {
+          console.error("[signing] sendDocumentCompletedEmail fallback failed", sr.signerEmail, err);
+        }
+      }
     }
   } else {
     // Not all signed: tell this signer they've signed and will get the document by email when envelope is complete

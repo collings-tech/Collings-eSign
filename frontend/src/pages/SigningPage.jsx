@@ -474,6 +474,7 @@ export default function SigningPage() {
   const allSigFieldsSigned = sigFields.length === 0 || sigFields.every((f) => fieldSignatureData[f.id]) || (signatureData && Object.keys(fieldSignatureData).length === 0);
   const requiredDataFields = fields.filter((f) => {
     if (f.required === false) return false;
+    if (f.readOnly === true) return false; // read-only fields can't be filled by signee — never block completion
     const t = (f.type || "signature").toLowerCase();
     if (t === "note" || t === "approve" || t === "decline") return false;
     if (t === "checkbox") return false; // checkbox (checked or unchecked) never blocks Complete
@@ -794,60 +795,67 @@ export default function SigningPage() {
                             >
                               {typeof value === "string" ? value : String(value ?? "")}
                             </span>
-                            {typeLower === "date" && editingDateFieldId === f.id ? (
+                            {isReadOnly ? (
+                              <div
+                                className="signing-field-readonly-text"
+                                style={textFormatStyle}
+                                aria-label={label}
+                                aria-readonly="true"
+                              >
+                                {value}
+                              </div>
+                            ) : typeLower === "date" && editingDateFieldId === f.id ? (
                               <DatePicker
                                 value={value}
                                 onChange={(newDate) => {
-                                  console.log("DatePicker onChange:", fieldKey, newDate);
-                                  setLocalFieldOverrides((prev) => {
-                                    const updated = { ...prev, [fieldKey]: newDate };
-                                    console.log("Updated localFieldOverrides:", updated);
-                                    return updated;
-                                  });
+                                  setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: newDate }));
                                   saveFieldValue(fieldKey, newDate);
                                 }}
-                                onClose={() => {
-                                  console.log("DatePicker onClose, current value:", value);
-                                  setEditingDateFieldId(null);
-                                }}
+                                onClose={() => setEditingDateFieldId(null)}
                                 autoFocus={true}
                                 fontSize={dynamicFontSize}
                               />
                             ) : typeLower === "date" ? (
-                              <div style={{ display: "flex", alignItems: "center", width: "100%", height: "100%", position: "relative" }}>
+                              <div
+                                style={{ display: "flex", alignItems: "center", width: "100%", height: "100%", position: "relative", cursor: "pointer" }}
+                                onDoubleClick={() => setEditingDateFieldId(f.id)}
+                                title="Double-click to pick a date"
+                              >
                                 <input
                                   type="text"
                                   className="signing-field-text-input"
-                                  style={{ ...textFormatStyle, flex: 1, paddingRight: "30px", cursor: isReadOnly ? "default" : "pointer" }}
+                                  style={{ ...textFormatStyle, flex: 1, paddingRight: "30px", cursor: "pointer", pointerEvents: "none", userSelect: "none" }}
                                   value={value}
-                                  readOnly={isReadOnly}
-                                  disabled={isReadOnly}
-                                  onChange={isReadOnly ? undefined : (e) => {
-                                    setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: e.target.value }));
-                                  }}
-                                  onClick={!isReadOnly ? () => {
-                                    setEditingDateFieldId(f.id);
-                                  } : undefined}
-                                  onBlur={isReadOnly ? undefined : (e) => saveFieldValue(fieldKey, e.target.value)}
+                                  readOnly
+                                  tabIndex={-1}
                                   placeholder="DD/MM/YYYY"
                                   aria-label={label}
-                                  aria-readonly={isReadOnly}
                                 />
-                                {!isReadOnly && (
-                                  <i 
-                                    className="lni lni-calendar-days" 
-                                    style={{ 
-                                      position: "absolute", 
-                                      right: "8px", 
-                                      fontSize: dynamicFontSize, 
-                                      color: "#64748b",
-                                      cursor: "pointer",
-                                      pointerEvents: "none"
-                                    }} 
-                                    aria-hidden 
-                                  />
-                                )}
+                                <i 
+                                  className="lni lni-calendar-days" 
+                                  style={{ 
+                                    position: "absolute", 
+                                    right: "8px", 
+                                    fontSize: dynamicFontSize, 
+                                    color: "#64748b",
+                                    cursor: "pointer",
+                                    pointerEvents: "none"
+                                  }} 
+                                  aria-hidden 
+                                />
                               </div>
+                            ) : typeLower === "text" ? (
+                              <textarea
+                                className="signing-field-text-input signing-field-textarea"
+                                style={{ ...textFormatStyle, resize: "none", overflowY: "auto", whiteSpace: "pre-wrap", overflowWrap: "break-word" }}
+                                value={value}
+                                onChange={(e) => {
+                                  setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: e.target.value }));
+                                }}
+                                onBlur={(e) => saveFieldValue(fieldKey, e.target.value)}
+                                placeholder={placeholderText}
+                                aria-label={label}
+                              />
                             ) : (
                               <input
                                 type={typeLower === "email" ? "email" : typeLower === "number" ? "text" : "text"}
@@ -855,15 +863,12 @@ export default function SigningPage() {
                                 className="signing-field-text-input"
                                 style={textFormatStyle}
                                 value={value}
-                                readOnly={isReadOnly}
-                                disabled={isReadOnly}
-                                onChange={isReadOnly ? undefined : (e) => {
+                                onChange={(e) => {
                                   setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: e.target.value }));
                                 }}
-                                onBlur={isReadOnly ? undefined : (e) => saveFieldValue(fieldKey, e.target.value)}
+                                onBlur={(e) => saveFieldValue(fieldKey, e.target.value)}
                                 placeholder={placeholderText}
                                 aria-label={label}
-                                aria-readonly={isReadOnly}
                               />
                             )}
                           </div>
@@ -877,16 +882,18 @@ export default function SigningPage() {
                         const valueStr = (rawValue ?? defaultVal).toString().trim();
                         const isChecked = valueStr === "Yes" || valueStr === "true";
                         const caption = (f.caption ?? "").trim() || "Checkbox";
+                        const isRequiredUnchecked = f.required && !isChecked;
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
-                            className={`signing-field-block signing-field-checkbox-block${isChecked ? " is-checked" : ""}`}
+                            className={`signing-field-block signing-field-checkbox-block${isChecked ? " is-checked" : ""}${isRequiredUnchecked ? " is-required-unchecked" : ""}`}
                             style={{
                               position: "absolute",
                               left: `${xPct}%`,
                               top: `${yPct}%`,
                               width: `${wPct}%`,
                               height: `${hPct}%`,
+                              ...(isRequiredUnchecked ? { backgroundColor: "#fef08a", borderColor: "#ca8a04" } : {}),
                             }}
                             role="checkbox"
                             aria-checked={isChecked}
@@ -908,7 +915,7 @@ export default function SigningPage() {
                           >
                             {isChecked && (
                               <svg className="signing-field-checkbox-check" viewBox="0 0 12 10" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                                <path d="M1 5L4.5 8.5L11 1.5" stroke="#7c3aed" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+                                <path d="M1 5L4.5 8.5L11 1.5" stroke="#1a1a1a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                               </svg>
                             )}
                           </div>

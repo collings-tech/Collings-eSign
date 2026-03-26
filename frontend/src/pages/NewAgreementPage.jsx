@@ -250,10 +250,12 @@ export default function NewAgreementPage() {
           setRecipients(
             signers.map((sr, i) => ({
               id: i + 1,
+              signRequestId: sr._id,
               name: sr.signerName || "",
               email: sr.signerEmail || "",
               role: "signer",
               order: sr.order ?? i + 1,
+              status: sr.status,
             }))
           );
         }
@@ -372,8 +374,23 @@ export default function NewAgreementPage() {
       try {
         const signRes = await apiClient.get(`/sign-requests/${editDocumentId}`);
         const existingSigners = signRes.data || [];
-        const existingEmails = new Set(existingSigners.map((sr) => (sr.signerEmail || "").toLowerCase().trim()));
         const signerRecipients = recipients.filter((r) => r.role === "signer" && r.name?.trim() && r.email?.trim());
+        const localEmails = new Set(signerRecipients.map((r) => r.email.trim().toLowerCase()));
+
+        // Delete sign requests for recipients that were removed from the list
+        for (const sr of existingSigners) {
+          const srEmail = (sr.signerEmail || "").toLowerCase().trim();
+          if (!localEmails.has(srEmail) && sr.status !== "signed") {
+            try {
+              await apiClient.delete(`/sign-requests/${editDocumentId}/${sr._id}`);
+            } catch (delErr) {
+              console.warn("Could not remove recipient:", delErr.response?.data?.error || delErr.message);
+            }
+          }
+        }
+
+        // Add any new recipients not already in the backend
+        const existingEmails = new Set(existingSigners.map((sr) => (sr.signerEmail || "").toLowerCase().trim()));
         for (let i = 0; i < signerRecipients.length; i++) {
           const r = signerRecipients[i];
           const email = r.email.trim().toLowerCase();
@@ -388,11 +405,12 @@ export default function NewAgreementPage() {
             existingEmails.add(email);
           }
         }
+
         const isTemplateFlow = location.state?.isTemplateFlow === true;
         navigate(`/documents/${editDocumentId}`, { state: { openPrepare: true, ...(isTemplateFlow ? { isTemplateFlow: true } : {}) } });
       } catch (err) {
         console.error(err);
-        setError(err.response?.data?.error || "Failed to add recipients");
+        setError(err.response?.data?.error || "Failed to update recipients");
       } finally {
         setLoading(false);
       }
