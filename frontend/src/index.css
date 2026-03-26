@@ -1902,6 +1902,40 @@ body.top-sidebar-open .top-sidebar {
   border: 1px solid var(--color-border);
 }
 
+/* Delete button in the prepare header — visible when a field is selected */
+.prepare-header-delete-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(239,68,68,0.35);
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+  animation: prepare-delete-btn-pop 0.15s ease;
+}
+.prepare-header-delete-btn i {
+  font-size: 1rem;
+}
+.prepare-header-delete-btn:hover {
+  background: #dc2626;
+  box-shadow: 0 3px 12px rgba(239,68,68,0.45);
+}
+.prepare-header-delete-btn:active {
+  background: #b91c1c;
+  transform: scale(0.96);
+}
+@keyframes prepare-delete-btn-pop {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
 /* Full-screen overlay shown while document is being sent */
 .prepare-sending-overlay {
   position: fixed;

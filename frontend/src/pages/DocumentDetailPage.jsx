@@ -253,6 +253,8 @@ function DocumentDetailPage() {
   const docCanvasRef = useRef(null);
   const prevZoomRef = useRef(zoom);
   const overlayRef = useRef(null);
+  /** Double-tap detection for mobile: tracks { id, time } of the last tap on a field */
+  const lastTapRef = useRef({ id: null, time: 0 });
   /** Available width for PDF – use viewport to ensure it fits on mobile (canvas can inherit wrong width) */
   const [availableWidth, setAvailableWidth] = useState(800);
 
@@ -1356,7 +1358,17 @@ function DocumentDetailPage() {
             {/* <button type="button" className="prepare-icon-btn" aria-label="Fit to page">⊡</button> */}
           </div>
           <div className="prepare-header-right">
-          
+            {selectedFieldId && doc?.status === "draft" && (
+              <button
+                type="button"
+                className="prepare-header-delete-btn"
+                onClick={() => removeField(selectedFieldId)}
+                aria-label="Delete selected field"
+              >
+                <i className="lni lni-trash-3" aria-hidden />
+                <span>Delete</span>
+              </button>
+            )}
           </div>
         </header>
         )}
@@ -1669,6 +1681,21 @@ function DocumentDetailPage() {
                                         e.stopPropagation();
                                         setEditingFieldId(f.id);
                                         setSelectedFieldId(f.id);
+                                      }
+                                    }}
+                                    onTouchEnd={(e) => {
+                                      if (!["Date Signed", "Name", "Email", "Company", "Title", "Text", "Number"].includes(f.type)) return;
+                                      const now = Date.now();
+                                      const last = lastTapRef.current;
+                                      if (last.id === f.id && now - last.time < 320) {
+                                        // Double-tap detected
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        lastTapRef.current = { id: null, time: 0 };
+                                        setEditingFieldId(f.id);
+                                        setSelectedFieldId(f.id);
+                                      } else {
+                                        lastTapRef.current = { id: f.id, time: now };
                                       }
                                     }}
                                     onKeyDown={(e) => {
