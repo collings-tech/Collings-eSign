@@ -2746,6 +2746,19 @@ body.top-sidebar-open .top-sidebar {
   background: var(--color-bg-hover);
 }
 
+/* When a field is selected: darker border + bolder shadow to signal it's about that field */
+.prepare-right-fab.prepare-right-fab-properties {
+  background: var(--color-bg-card);
+  color: var(--color-text);
+  border-color: #374151;
+  border-width: 2px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.22);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.prepare-right-fab.prepare-right-fab-properties:hover {
+  background: var(--color-bg-hover);
+}
+
 .prepare-right-fab-icon {
   font-size: 1.1rem;
 }

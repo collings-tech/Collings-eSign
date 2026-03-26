@@ -1390,14 +1390,20 @@ function DocumentDetailPage() {
 
             <button
               type="button"
-              className="prepare-right-fab"
+              className={`prepare-right-fab${selectedFieldId ? " prepare-right-fab-properties" : ""}`}
               onClick={() => setRightPanelPopupOpen(true)}
-              aria-label="Open Pages panel"
-              title="Pages"
+              aria-label={selectedFieldId ? "Open field properties" : "Open Pages panel"}
+              title={selectedFieldId ? "Field Properties" : "Pages"}
               style={{ display: rightPanelPopupOpen ? "none" : undefined }}
             >
-            <span className="prepare-right-fab-icon"><i className="lni lni-file-multiple" aria-hidden /></span>
-            <span className="prepare-right-fab-label">Pages</span>
+            <span className="prepare-right-fab-icon">
+              {selectedFieldId
+                ? <i className="lni lni-settings" aria-hidden />
+                : <i className="lni lni-file-multiple" aria-hidden />}
+            </span>
+            <span className="prepare-right-fab-label">
+              {selectedFieldId ? "Properties" : "Pages"}
+            </span>
           </button>
 
           <aside className="prepare-left prepare-left-desktop">
