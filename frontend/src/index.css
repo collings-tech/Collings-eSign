@@ -5027,39 +5027,41 @@ body.top-sidebar-open .top-sidebar {
 /* Typable text fields: name, email, company, title, text, number – normal font */
 .signing-field-text-block {
   position: relative;
-  background: #ffffff;
-  border: 1px solid var(--color-accent-hover);
-  border-radius: 4px;
-  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
-  padding: 0.15rem 0.4rem;
+  background: transparent;
+  border: 1.5px solid #4169e1;
+  border-radius: 2px;
   padding: 0;
   display: flex;
   align-items: stretch;
-  min-width: 0;
-  overflow: hidden;
+  /* overflow: visible lets the block grow beyond its original PDF bounds */
+  overflow: visible;
 }
 
-/* Hidden span used to measure text width so the field can grow with content */
+/* Hidden span sits in the flex flow so its natural width drives the block's width.
+   The input overlays it absolutely, so the block always matches the text width. */
 .signing-field-text-measure {
-  position: absolute;
-  left: 0;
-  top: 0;
+  flex-shrink: 0;
   visibility: hidden;
   pointer-events: none;
-  white-space: pre;
+  /* nowrap so the span measures the full single-line text width */
+  white-space: nowrap;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   font-size: 0.875rem;
   font-weight: 400;
-  padding: 0.25rem 0.5rem;
+  padding: 0.08rem 0.55rem;
   box-sizing: border-box;
 }
 
 .signing-field-text-input {
+  /* Overlay the hidden span so the visible field fills the block exactly */
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   min-height: 0;
   min-width: 0;
-  padding: 0.25rem 0.5rem;
+  padding: 0.08rem 0.55rem;
   border: none;
   border-radius: 4px;
   font: inherit;
@@ -5067,29 +5069,32 @@ body.top-sidebar-open .top-sidebar {
   font-size: inherit;
   font-weight: 400;
   color: #1f2937;
-  background: #faf5ff;
+  background: #fffde7;
   box-sizing: border-box;
   outline: none;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
+  white-space: nowrap;
   -webkit-appearance: none;
   appearance: none;
   -webkit-tap-highlight-color: transparent;
 }
 
 .signing-field-textarea {
+  /* No auto-wrap; the block expands horizontally with content */
+  white-space: nowrap;
   overflow: hidden;
-  text-overflow: clip;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
-  word-break: break-word;
   resize: none;
 }
 
 .signing-field-text-input::placeholder {
-  color: #6b21a8;
-  opacity: 0.85;
+  color: #999;
+  opacity: 1;
+}
+
+.signing-field-text-block:focus-within {
+  border-color: #1a56db;
+  box-shadow: 0 0 0 2px rgba(26, 86, 219, 0.25);
 }
 
 .signing-field-text-input:focus {

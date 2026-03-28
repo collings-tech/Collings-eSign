@@ -16,29 +16,25 @@ import DatePicker from "../components/DatePicker.jsx";
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const STANDARD_FIELDS = [
-  { group: "Signature Fields", items: ["Signature", "Initial", "Stamp", "Date Signed"] },
-  { group: "Personal Information Fields", items: ["Name", "Email", "Company", "Title"] },
-  { group: "Data Input Fields", items: ["Text", "Number", "Checkbox", "Dropdown", "Radio"] },
-  { group: "Action Fields", items: ["Note", "Approve", "Decline"] },
+  { group: "Signature Fields", items: ["Signature", "Initial", "Date Signed"] },
+  { group: "Personal Information Fields", items: ["Name", "Email", "Mobile"] },
+  { group: "Data Input Fields", items: ["Text", "Checkbox"] },
 ];
-
-// const STANDARD_FIELDS = [
-//   { group: "Signature Fields", items: ["Signature", "Initial"] },
-
-// ];
 
 const FIELD_ICONS = {
   Signature: <i className="lni lni-pen-to-square" aria-hidden />,
   Initial: <i className="lni lni-pen-to-square" aria-hidden />,
-  Stamp: <i className="lni lni-stamp" aria-hidden />,
   "Date Signed": <i className="lni lni-calendar-days" aria-hidden />,
   Name: <i className="lni lni-user-4" aria-hidden />,
   Email: "@",
+  Mobile: <i className="lni lni-phone" aria-hidden />,
+  Text: "T",
+  Checkbox: <i className="lni lni-check-square-2" aria-hidden />,
+  // Legacy icons kept for backward compat with existing documents
+  Stamp: <i className="lni lni-stamp" aria-hidden />,
   Company: <i className="lni lni-buildings-1" aria-hidden />,
   Title: <i className="lni lni-briefcase-1" aria-hidden />,
-  Text: "T",
   Number: "#",
-  Checkbox: <i className="lni lni-check-square-2" aria-hidden />,
   Dropdown: <i className="lni lni-angle-double-down" aria-hidden />,
   Radio: "○",
   Note: <i className="lni lni-clipboard" aria-hidden />,
@@ -103,15 +99,17 @@ function fieldTypeToBackend(displayType) {
   const map = {
     Signature: "signature",
     Initial: "initial",
-    Stamp: "stamp",
     "Date Signed": "date",
     Name: "name",
     Email: "email",
+    Mobile: "mobile",
+    Text: "text",
+    Checkbox: "checkbox",
+    // Legacy mappings for existing documents
+    Stamp: "stamp",
     Company: "company",
     Title: "title",
-    Text: "text",
     Number: "number",
-    Checkbox: "checkbox",
     Dropdown: "dropdown",
     Radio: "radio",
     Note: "note",
@@ -343,7 +341,7 @@ function DocumentDetailPage() {
         const typeToLabel = (t) => {
           if (!t) return "Signature";
           const lower = String(t).toLowerCase();
-          const map = { signature: "Signature", initial: "Initial", stamp: "Stamp", date: "Date Signed", name: "Name", email: "Email", company: "Company", title: "Title", text: "Text", number: "Number", checkbox: "Checkbox", dropdown: "Dropdown", radio: "Radio", note: "Note", approve: "Approve", decline: "Decline" };
+          const map = { signature: "Signature", initial: "Initial", date: "Date Signed", name: "Name", email: "Email", mobile: "Mobile", text: "Text", checkbox: "Checkbox", stamp: "Stamp", company: "Company", title: "Title", number: "Number", dropdown: "Dropdown", radio: "Radio", note: "Note", approve: "Approve", decline: "Decline" };
           return map[lower] || (t.charAt(0).toUpperCase() + (t.slice(1) || "").toLowerCase());
         };
         const built = signerList.flatMap((sr) =>
@@ -431,7 +429,7 @@ function DocumentDetailPage() {
     return () => cancelAnimationFrame(raf);
   }, [zoom]);
 
-  const TEXT_FORMATTING_FIELDS = ["Name", "Email", "Company", "Title", "Text"];
+  const TEXT_FORMATTING_FIELDS = ["Name", "Email", "Mobile", "Text", "Company", "Title"];
 
   // Close mobile fields popup when user selects a field type
   useEffect(() => {
@@ -444,9 +442,9 @@ function DocumentDetailPage() {
     const recipientId = selectedRecipientId || signers[0]?._id;
     const defaultPage = 1;
     const DATA_INPUT_COMPACT = ["Radio"];
-    const DATA_INPUT_RECTANGLE = ["Text", "Number", "Dropdown", "Name", "Email", "Company", "Title"];
-    const defWPct = type === "Checkbox" ? 2.3 : DATA_INPUT_COMPACT.includes(type) ? 12 : DATA_INPUT_RECTANGLE.includes(type) ? 16 : 14;
-    const defHPct = type === "Checkbox" ? 1.8 : DATA_INPUT_COMPACT.includes(type) ? 3 : DATA_INPUT_RECTANGLE.includes(type) ? 4 : 6;
+    const DATA_INPUT_RECTANGLE = ["Text", "Number", "Dropdown", "Name", "Email", "Mobile", "Company", "Title"];
+    const defWPct = type === "Checkbox" ? 2.3 : DATA_INPUT_COMPACT.includes(type) ? 12 : DATA_INPUT_RECTANGLE.includes(type) ? 20 : 14;
+    const defHPct = type === "Checkbox" ? 1.8 : DATA_INPUT_COMPACT.includes(type) ? 3 : DATA_INPUT_RECTANGLE.includes(type) ? 3 : 6;
     const base = {
       id: generateFieldId(),
       type,
@@ -480,6 +478,9 @@ function DocumentDetailPage() {
       newField = { ...newField, readOnly: false, ...textFormatting };
     }
     if (type === "Email") {
+      newField = { ...newField, defaultValue: "" };
+    }
+    if (type === "Mobile") {
       newField = { ...newField, defaultValue: "" };
     }
     if (type === "Company") {
@@ -625,9 +626,9 @@ function DocumentDetailPage() {
   }, [selectedFieldId, removeField]);
 
   const DATA_INPUT_COMPACT = ["Radio"];
-  const DATA_INPUT_RECTANGLE = ["Text", "Number", "Dropdown", "Name", "Email", "Company", "Title"];
-  const pendingWPct = pendingFieldType === "Checkbox" ? 2.3 : DATA_INPUT_COMPACT.includes(pendingFieldType) ? 12 : DATA_INPUT_RECTANGLE.includes(pendingFieldType) ? 16 : 14;
-  const pendingHPct = pendingFieldType === "Checkbox" ? 1.8 : DATA_INPUT_COMPACT.includes(pendingFieldType) ? 3 : DATA_INPUT_RECTANGLE.includes(pendingFieldType) ? 4 : (pendingFieldType === "Signature" || pendingFieldType === "Initial") ? 6 : 5;
+  const DATA_INPUT_RECTANGLE = ["Text", "Number", "Dropdown", "Name", "Email", "Mobile", "Company", "Title"];
+  const pendingWPct = pendingFieldType === "Checkbox" ? 2.3 : DATA_INPUT_COMPACT.includes(pendingFieldType) ? 12 : DATA_INPUT_RECTANGLE.includes(pendingFieldType) ? 20 : 14;
+  const pendingHPct = pendingFieldType === "Checkbox" ? 1.8 : DATA_INPUT_COMPACT.includes(pendingFieldType) ? 3 : DATA_INPUT_RECTANGLE.includes(pendingFieldType) ? 3 : (pendingFieldType === "Signature" || pendingFieldType === "Initial") ? 6 : 5;
 
   /** DocuSign-style: place field on document click when one is carried by cursor (center at click). Uses percent coords. */
   const handleDocumentPlaceClick = useCallback((e) => {
@@ -892,7 +893,7 @@ function DocumentDetailPage() {
       base.defaultOption = f.defaultOption ?? "";
     }
     if (f.type === "Name" && f.nameFormat) base.nameFormat = f.nameFormat;
-    if (["Name", "Email", "Company", "Title", "Text", "Date Signed"].includes(f.type)) {
+    if (["Name", "Email", "Mobile", "Company", "Title", "Text", "Date Signed"].includes(f.type)) {
       if (f.readOnly != null) base.readOnly = f.readOnly;
       if (f.fontFamily != null) base.fontFamily = f.fontFamily;
       if (f.fontSize != null) base.fontSize = f.fontSize;
@@ -1654,7 +1655,7 @@ function DocumentDetailPage() {
                                 const isSignatureType = f.type === "Signature" || f.type === "Initial";
                                 const isNoteField = f.type === "Note";
                                 const isCheckboxField = f.type === "Checkbox";
-                                const isDataInputField = ["Name", "Email", "Company", "Title", "Text", "Number"].includes(f.type);
+                                const isDataInputField = ["Name", "Email", "Mobile", "Company", "Title", "Text", "Number"].includes(f.type);
                                 const isSelected = selectedFieldId === f.id;
                                 const showHandles = isSelected;
                                 const xPct = f.xPct != null ? f.xPct : 8;
@@ -1670,7 +1671,7 @@ function DocumentDetailPage() {
                                     ref={f.page === 1 ? overlayRef : undefined}
                                     role="button"
                                     tabIndex={0}
-                                    className={`prepare-placed-field ${isSignatureType ? "prepare-placed-field-sign" : ""} ${isNoteField ? "prepare-placed-field-note" : ""} ${isCheckboxField ? "prepare-placed-field-checkbox" : ""} ${f.type === "Radio" ? "prepare-placed-field-radio" : ""} ${["Text", "Number", "Dropdown", "Name", "Email", "Company", "Title"].includes(f.type) ? "prepare-placed-field-data-rect" : ""} ${isSelected ? "selected" : ""} ${draggingFieldId === f.id ? "dragging" : ""} ${resizingFieldId === f.id ? "resizing" : ""}`}
+                                    className={`prepare-placed-field ${isSignatureType ? "prepare-placed-field-sign" : ""} ${isNoteField ? "prepare-placed-field-note" : ""} ${isCheckboxField ? "prepare-placed-field-checkbox" : ""} ${f.type === "Radio" ? "prepare-placed-field-radio" : ""} ${["Text", "Number", "Dropdown", "Name", "Email", "Mobile", "Company", "Title"].includes(f.type) ? "prepare-placed-field-data-rect" : ""} ${isSelected ? "selected" : ""} ${draggingFieldId === f.id ? "dragging" : ""} ${resizingFieldId === f.id ? "resizing" : ""}`}
                                     style={{
                                       position: "absolute",
                                       left: `${xPct}%`,
@@ -1683,14 +1684,14 @@ function DocumentDetailPage() {
                                     title={isDataInputField ? "Double-click to enter/edit value" : undefined}
                                     onPointerDown={(e) => handleFieldPointerDown(e, f)}
                                     onDoubleClick={(e) => {
-                                      if (["Date Signed", "Name", "Email", "Company", "Title", "Text", "Number"].includes(f.type)) {
+                                      if (["Date Signed", "Name", "Email", "Mobile", "Company", "Title", "Text", "Number"].includes(f.type)) {
                                         e.stopPropagation();
                                         setEditingFieldId(f.id);
                                         setSelectedFieldId(f.id);
                                       }
                                     }}
                                     onTouchEnd={(e) => {
-                                      if (!["Date Signed", "Name", "Email", "Company", "Title", "Text", "Number"].includes(f.type)) return;
+                                      if (!["Date Signed", "Name", "Email", "Mobile", "Company", "Title", "Text", "Number"].includes(f.type)) return;
                                       const now = Date.now();
                                       const last = lastTapRef.current;
                                       if (last.id === f.id && now - last.time < 320) {
@@ -1728,7 +1729,7 @@ function DocumentDetailPage() {
                                         autoFocus={true}
                                         fontSize={dynamicFontSize}
                                       />
-                                    ) : ["Name", "Email", "Company", "Title", "Text", "Number"].includes(f.type) && editingFieldId === f.id ? (
+                                    ) : ["Name", "Email", "Mobile", "Company", "Title", "Text", "Number"].includes(f.type) && editingFieldId === f.id ? (
                                       <input
                                         type="text"
                                         className="prepare-placed-field-inline-input"
@@ -1752,7 +1753,7 @@ function DocumentDetailPage() {
                                       <span className="prepare-placed-field-label" style={{ fontSize: dynamicFontSize }}>
                                         {(f.defaultValue ?? "").trim() || (f.nameFormat ?? "Full Name")}
                                       </span>
-                                    ) : ["Email", "Company", "Title", "Text", "Number"].includes(f.type) ? (
+                                    ) : ["Email", "Mobile", "Company", "Title", "Text", "Number"].includes(f.type) ? (
                                       <span className="prepare-placed-field-label" style={{ fontSize: dynamicFontSize }}>
                                         {(f.defaultValue ?? "").trim() || f.type}
                                       </span>
@@ -1879,7 +1880,7 @@ function DocumentDetailPage() {
                     </label>
                   </>
                 )}
-                {["Email", "Company", "Title"].includes(selectedField.type) && (
+                {["Email", "Mobile", "Company", "Title"].includes(selectedField.type) && (
                   <label className="prepare-property-row">
                     <span>Default Value</span>
                     <input
@@ -1903,7 +1904,7 @@ function DocumentDetailPage() {
                   />
                   <span>Required Field</span>
                 </label>
-                {["Company", "Title", "Text", "Number"].includes(selectedField.type) && (
+                {["Mobile", "Company", "Title", "Text", "Number"].includes(selectedField.type) && (
                   <label className="prepare-property-row prepare-property-check">
                     <input
                       type="checkbox"
@@ -2024,44 +2025,6 @@ function DocumentDetailPage() {
                     </div>
                   </div>
                 )}
-                {selectedField.type === "Text" && (
-                  <div className="prepare-property-section prepare-property-section-expanded">
-                    <button type="button" className="prepare-property-section-head">
-                      Text Field ▾
-                    </button>
-                    <div className="prepare-property-section-body">
-                      <label className="prepare-property-row">
-                        <span>Default Value</span>
-                        <input
-                          type="text"
-                          value={selectedField.defaultValue ?? ""}
-                          onChange={(e) => updateField(selectedField.id, { defaultValue: e.target.value })}
-                          placeholder="Pre-fill with value"
-                        />
-                      </label>
-                      <label className="prepare-property-row">
-                        <textarea
-                          value={selectedField.addText ?? ""}
-                          onChange={(e) => updateField(selectedField.id, { addText: e.target.value })}
-                          placeholder="Add Text"
-                          rows={3}
-                        />
-                      </label>
-                      <label className="prepare-property-row">
-                        <span>Character Limit</span>
-                        <input
-                          type="number"
-                          min={1}
-                          max={10000}
-                          value={selectedField.characterLimit ?? 4000}
-                          onChange={(e) =>
-                            updateField(selectedField.id, { characterLimit: Math.max(1, Number(e.target.value) || 4000) })
-                          }
-                        />
-                      </label>
-                    </div>
-                  </div>
-                )}
                 {(selectedField.type === "Dropdown" || selectedField.type === "Radio") && (
                   <div className="prepare-property-section prepare-property-section-expanded">
                     <button type="button" className="prepare-property-section-head">
@@ -2164,7 +2127,7 @@ function DocumentDetailPage() {
                     Formatting ▾
                   </button>
                   <div className="prepare-property-section-body">
-                    {["Name", "Email", "Company", "Title", "Text", "Number"].includes(selectedField.type) ? (
+                    {["Name", "Email", "Mobile", "Company", "Title", "Text", "Number"].includes(selectedField.type) ? (
                       <>
                         <label className="prepare-property-row">
                           <span>Font</span>
@@ -2241,26 +2204,6 @@ function DocumentDetailPage() {
                             <option value="Dark Gray">Dark Gray</option>
                           </select>
                         </label>
-                        {selectedField.type === "Text" && (
-                          <>
-                            <label className="prepare-property-row prepare-property-check">
-                              <input
-                                type="checkbox"
-                                checked={selectedField.hideWithAsterisks}
-                                onChange={(e) => updateField(selectedField.id, { hideWithAsterisks: e.target.checked })}
-                              />
-                              <span>Hide text with asterisks</span>
-                            </label>
-                            <label className="prepare-property-row prepare-property-check">
-                              <input
-                                type="checkbox"
-                                checked={selectedField.fixedWidth}
-                                onChange={(e) => updateField(selectedField.id, { fixedWidth: e.target.checked })}
-                              />
-                              <span>Fixed Width</span>
-                            </label>
-                          </>
-                        )}
                       </>
                     ) : (
                       <label className="prepare-property-row">
@@ -2278,41 +2221,7 @@ function DocumentDetailPage() {
                     )}
                   </div>
                 </div>
-                <div className="prepare-property-section">
-                  <button type="button" className="prepare-property-section-head">
-                    Data Label ▾
-                  </button>
-                  <div className="prepare-property-section-body">
-                    <label className="prepare-property-row">
-                      <input
-                        type="text"
-                        value={selectedField.dataLabel}
-                        onChange={(e) =>
-                          updateField(selectedField.id, { dataLabel: e.target.value })
-                        }
-                        placeholder="Data label"
-                      />
-                    </label>
-                  </div>
-                </div>
-                <div className="prepare-property-section">
-                  <button type="button" className="prepare-property-section-head">
-                    Tooltip ▾
-                  </button>
-                  <div className="prepare-property-section-body">
-                    <label className="prepare-property-row">
-                      <textarea
-                        value={selectedField.tooltip}
-                        onChange={(e) =>
-                          updateField(selectedField.id, { tooltip: e.target.value })
-                        }
-                        placeholder="Tooltip text"
-                        rows={2}
-                      />
-                    </label>
-                  </div>
-                </div>
-                <div className="prepare-property-section">
+                <div className="prepare-property-section" style={{ display: "none" }}>
                   <button type="button" className="prepare-property-section-head">
                     Location ▾
                   </button>
@@ -2446,7 +2355,7 @@ function DocumentDetailPage() {
                     </label>
                   </>
                 )}
-                {["Email", "Company", "Title"].includes(selectedField.type) && (
+                {["Email", "Mobile", "Company", "Title"].includes(selectedField.type) && (
                   <label className="prepare-property-row">
                     <span>Default Value</span>
                     <input
@@ -2470,7 +2379,7 @@ function DocumentDetailPage() {
                   />
                   <span>Required Field</span>
                 </label>
-                {["Company", "Title", "Text", "Number"].includes(selectedField.type) && (
+                {["Mobile", "Company", "Title", "Text", "Number"].includes(selectedField.type) && (
                   <label className="prepare-property-row prepare-property-check">
                     <input
                       type="checkbox"
@@ -2591,44 +2500,6 @@ function DocumentDetailPage() {
                     </div>
                   </div>
                 )}
-                {selectedField.type === "Text" && (
-                  <div className="prepare-property-section prepare-property-section-expanded">
-                    <button type="button" className="prepare-property-section-head">
-                      Text Field ▾
-                    </button>
-                    <div className="prepare-property-section-body">
-                      <label className="prepare-property-row">
-                        <span>Default Value</span>
-                        <input
-                          type="text"
-                          value={selectedField.defaultValue ?? ""}
-                          onChange={(e) => updateField(selectedField.id, { defaultValue: e.target.value })}
-                          placeholder="Pre-fill with value"
-                        />
-                      </label>
-                      <label className="prepare-property-row">
-                        <textarea
-                          value={selectedField.addText ?? ""}
-                          onChange={(e) => updateField(selectedField.id, { addText: e.target.value })}
-                          placeholder="Add Text"
-                          rows={3}
-                        />
-                      </label>
-                      <label className="prepare-property-row">
-                        <span>Character Limit</span>
-                        <input
-                          type="number"
-                          min={1}
-                          max={10000}
-                          value={selectedField.characterLimit ?? 4000}
-                          onChange={(e) =>
-                            updateField(selectedField.id, { characterLimit: Math.max(1, Number(e.target.value) || 4000) })
-                          }
-                        />
-                      </label>
-                    </div>
-                  </div>
-                )}
                 {(selectedField.type === "Dropdown" || selectedField.type === "Radio") && (
                   <div className="prepare-property-section prepare-property-section-expanded">
                     <button type="button" className="prepare-property-section-head">
@@ -2731,7 +2602,7 @@ function DocumentDetailPage() {
                     Formatting ▾
                   </button>
                   <div className="prepare-property-section-body">
-                    {["Name", "Email", "Company", "Title", "Text", "Number"].includes(selectedField.type) ? (
+                    {["Name", "Email", "Mobile", "Company", "Title", "Text", "Number"].includes(selectedField.type) ? (
                       <>
                         <label className="prepare-property-row">
                           <span>Font</span>
@@ -2808,26 +2679,6 @@ function DocumentDetailPage() {
                             <option value="Dark Gray">Dark Gray</option>
                           </select>
                         </label>
-                        {selectedField.type === "Text" && (
-                          <>
-                            <label className="prepare-property-row prepare-property-check">
-                              <input
-                                type="checkbox"
-                                checked={selectedField.hideWithAsterisks}
-                                onChange={(e) => updateField(selectedField.id, { hideWithAsterisks: e.target.checked })}
-                              />
-                              <span>Hide text with asterisks</span>
-                            </label>
-                            <label className="prepare-property-row prepare-property-check">
-                              <input
-                                type="checkbox"
-                                checked={selectedField.fixedWidth}
-                                onChange={(e) => updateField(selectedField.id, { fixedWidth: e.target.checked })}
-                              />
-                              <span>Fixed Width</span>
-                            </label>
-                          </>
-                        )}
                       </>
                     ) : (
                       <label className="prepare-property-row">
@@ -2845,41 +2696,7 @@ function DocumentDetailPage() {
                     )}
                   </div>
                 </div>
-                <div className="prepare-property-section">
-                  <button type="button" className="prepare-property-section-head">
-                    Data Label ▾
-                  </button>
-                  <div className="prepare-property-section-body">
-                    <label className="prepare-property-row">
-                      <input
-                        type="text"
-                        value={selectedField.dataLabel}
-                        onChange={(e) =>
-                          updateField(selectedField.id, { dataLabel: e.target.value })
-                        }
-                        placeholder="Data label"
-                      />
-                    </label>
-                  </div>
-                </div>
-                <div className="prepare-property-section">
-                  <button type="button" className="prepare-property-section-head">
-                    Tooltip ▾
-                  </button>
-                  <div className="prepare-property-section-body">
-                    <label className="prepare-property-row">
-                      <textarea
-                        value={selectedField.tooltip}
-                        onChange={(e) =>
-                          updateField(selectedField.id, { tooltip: e.target.value })
-                        }
-                        placeholder="Tooltip text"
-                        rows={2}
-                      />
-                    </label>
-                  </div>
-                </div>
-                <div className="prepare-property-section">
+                <div className="prepare-property-section" style={{ display: "none" }}>
                   <button type="button" className="prepare-property-section-head">
                     Location ▾
                   </button>

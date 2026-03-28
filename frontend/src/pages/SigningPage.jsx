@@ -79,6 +79,24 @@ export default function SigningPage() {
     if (fromServer && typeof fromServer === "object") setSavedFieldValues(fromServer);
   }, [info?.signRequest?.fieldValues]);
 
+  // Pre-fill email fields with the recipient's email address when info loads.
+  useEffect(() => {
+    const signerEmail = info?.signRequest?.signerEmail;
+    const fields = info?.signRequest?.signatureFields;
+    if (!signerEmail || !Array.isArray(fields)) return;
+    const fieldValues = info?.signRequest?.fieldValues || {};
+    const prefills = {};
+    for (const f of fields) {
+      if ((f.type || "").toLowerCase() !== "email") continue;
+      const key = f.id;
+      const alreadyHasValue = fieldValues[key] != null && fieldValues[key] !== "";
+      if (!alreadyHasValue) prefills[key] = signerEmail;
+    }
+    if (Object.keys(prefills).length > 0) {
+      setLocalFieldOverrides((prev) => ({ ...prefills, ...prev }));
+    }
+  }, [info?.signRequest?.signerEmail, info?.signRequest?.signatureFields, info?.signRequest?.fieldValues]);
+
   const fetchFileUrl = useCallback(() => {
     setFileUrlError(null);
     setFileUrlLoading(true);
@@ -367,7 +385,7 @@ export default function SigningPage() {
     }
   };
 
-  const TEXT_FIELD_TYPES_FOR_MEASURE = ["name", "email", "company", "title", "text", "number", "stamp", "date"];
+  const TEXT_FIELD_TYPES_FOR_MEASURE = ["name", "email", "mobile", "text", "date", "company", "title", "number", "stamp"];
   useLayoutEffect(() => {
     if (!info?.signRequest?.signatureFields?.length) return;
     const fields = info.signRequest.signatureFields;
@@ -376,9 +394,14 @@ export default function SigningPage() {
     for (const f of fields) {
       const t = (f.type || "signature").toLowerCase();
       if (!TEXT_FIELD_TYPES_FOR_MEASURE.includes(t)) continue;
-      let value = localFieldOverrides[f.id] ?? savedFieldValues[f.id] ?? fieldValues[f.id] ?? "";
-      if (!value && f.defaultValue) value = String(f.defaultValue).trim();
-      if (!value && t === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
+      const rawMeasureValue = localFieldOverrides[f.id] ?? savedFieldValues[f.id] ?? fieldValues[f.id] ?? null;
+      let value = rawMeasureValue;
+      if (rawMeasureValue == null) {
+        if (f.defaultValue) value = String(f.defaultValue).trim();
+        else if (t === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
+        else if (t === "email" && info?.signRequest?.signerEmail) value = info.signRequest.signerEmail;
+      }
+      if (value == null) value = "";
       const el = textMeasureRefs.current[f.id];
       if (el) {
         const measured = el.getBoundingClientRect().width;
@@ -435,7 +458,7 @@ export default function SigningPage() {
   const fieldSignatureData = signRequest.fieldSignatureData || {};
   const fieldValues = signRequest.fieldValues || {};
   const allFieldsAreInitial = fields.every((f) => (f.type || "signature").toLowerCase() === "initial");
-  const TEXT_FIELD_TYPES = ["name", "email", "company", "title", "text", "number", "stamp", "date"];
+  const TEXT_FIELD_TYPES = ["name", "email", "mobile", "text", "date", "company", "title", "number", "stamp"];
   const sigFields = fields.filter((f) => {
     const t = (f.type || "signature").toLowerCase();
     return t === "signature" || t === "initial";
@@ -483,9 +506,12 @@ export default function SigningPage() {
   const allRequiredDataFieldsFilled = requiredDataFields.length === 0 || requiredDataFields.every((f) => {
     const key = getFieldKey(f);
     const t = (f.type || "signature").toLowerCase();
-    let value = (localFieldOverrides[key] ?? savedFieldValues[key] ?? fieldValues[f.id] ?? fieldValues[key] ?? "").toString().trim();
-    if (!value && f.defaultValue) value = String(f.defaultValue).trim();
-    if (!value && t === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
+    const rawVal = localFieldOverrides[key] ?? savedFieldValues[key] ?? fieldValues[f.id] ?? fieldValues[key] ?? null;
+    let value = rawVal == null ? "" : String(rawVal).trim();
+    if (rawVal == null) {
+      if (f.defaultValue) value = String(f.defaultValue).trim();
+      else if (t === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
+    }
     return value.length > 0; // radio must have a value (user chose 1)
   });
   const canComplete = (allSigFieldsSigned || (hasApproveField && approvedAt)) && allRequiredDataFieldsFilled;
@@ -766,14 +792,17 @@ export default function SigningPage() {
                         const isReadOnly = f.readOnly === true;
                         const rawValue = localFieldOverrides[fieldKey] ?? savedFieldValues[fieldKey] ?? fieldValues[f.id] ?? fieldValues[fieldKey];
                         let value = rawValue;
-                        if (!value && f.defaultValue) value = String(f.defaultValue).trim();
-                        if (!value && typeLower === "text" && (f.addText ?? "").trim()) value = f.addText.trim();
-                        if (!value) value = "";
+                        if (rawValue == null) {
+                          if (f.defaultValue) value = String(f.defaultValue).trim();
+                          else if (typeLower === "text" && (f.addText ?? "").trim()) value = f.addText.trim();
+                          else if (typeLower === "email" && info?.signRequest?.signerEmail) value = info.signRequest.signerEmail;
+                        }
+                        if (value == null) value = "";
                         const label = typeLower === "date" ? "Date signed" : typeLower === "name" ? (f.nameFormat ?? "Full Name") : typeLower.charAt(0).toUpperCase() + typeLower.slice(1);
                         const placeholderText = typeLower === "number" && f.placeholder ? f.placeholder : label;
-                        const baseRem = Math.max(0.5, Math.min(1.2, hPct * 0.15));
-                        const basePx = baseRem * 16;
-                        const dynamicFontSize = `${Math.max(8, Math.round(basePx * fontScale))}px`;
+                        const renderedPageWidthPx = Math.round(availableWidth * scale);
+                        const renderedFieldHeightPx = (hPct / 100) * renderedPageWidthPx * (rh / rw);
+                        const dynamicFontSize = `${Math.max(8, Math.round(renderedFieldHeightPx * 0.70))}px`;
                         const textFormatStyle = { ...getTextFieldFormatStyle(f), fontSize: dynamicFontSize };
                         return (
                           <div
@@ -783,7 +812,7 @@ export default function SigningPage() {
                               position: "absolute",
                               left: `${xPct}%`,
                               top: `${yPct}%`,
-                              width: `${wPct}%`,
+                              minWidth: `${wPct}%`,
                               height: `${hPct}%`,
                             }}
                           >
@@ -793,7 +822,7 @@ export default function SigningPage() {
                               style={textFormatStyle}
                               aria-hidden
                             >
-                              {typeof value === "string" ? value : String(value ?? "")}
+                              {(typeof value === "string" ? value : String(value ?? "")) || placeholderText || "\u00a0"}
                             </span>
                             {isReadOnly ? (
                               <div
@@ -847,7 +876,7 @@ export default function SigningPage() {
                             ) : typeLower === "text" ? (
                               <textarea
                                 className="signing-field-text-input signing-field-textarea"
-                                style={{ ...textFormatStyle, resize: "none", overflowY: "auto", whiteSpace: "pre-wrap", overflowWrap: "break-word" }}
+                                style={textFormatStyle}
                                 value={value}
                                 onChange={(e) => {
                                   setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: e.target.value }));
@@ -858,8 +887,8 @@ export default function SigningPage() {
                               />
                             ) : (
                               <input
-                                type={typeLower === "email" ? "email" : typeLower === "number" ? "text" : "text"}
-                                inputMode={typeLower === "number" ? "numeric" : "text"}
+                                type={typeLower === "email" ? "email" : typeLower === "mobile" ? "tel" : typeLower === "number" ? "text" : "text"}
+                                inputMode={typeLower === "number" ? "numeric" : typeLower === "mobile" ? "tel" : "text"}
                                 className="signing-field-text-input"
                                 style={textFormatStyle}
                                 value={value}

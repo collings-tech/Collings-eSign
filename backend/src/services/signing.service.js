@@ -331,6 +331,7 @@ async function sendToNextSignerInOrder(documentId) {
 
   const owner = await User.findById(doc.ownerId).lean();
   const senderName = owner?.name || owner?.email || "Someone";
+  const senderEmail = owner?.email || '';
 
   try {
     await sendDocuSignStyleSignEmail({
@@ -339,6 +340,7 @@ async function sendToNextSignerInOrder(documentId) {
       token: next.signLinkToken,
       documentTitle: doc.title || "Document",
       senderName,
+      senderEmail,
     });
     await SignRequest.findByIdAndUpdate(next._id, { emailSentAt: new Date() });
     await logEvent({

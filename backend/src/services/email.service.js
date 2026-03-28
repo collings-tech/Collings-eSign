@@ -118,7 +118,8 @@ async function sendDocuSignStyleSignEmail({
   signerName,
   token,
   documentTitle,
-  senderName
+  senderName,
+  senderEmail,
 }) {
   const t = getTransporter();
   if (!t) {
@@ -128,15 +129,17 @@ async function sendDocuSignStyleSignEmail({
   const signUrl = `${clientOrigin.replace(/\/+$/, '')}/sign/${token}`;
   const subject = `Please complete with Collings eSign: ${documentTitle}`;
 
+  const resolvedSenderEmail = senderEmail || process.env.EMAIL_FROM || process.env.SMTP_USER || '';
+
   const html = buildDocuSignStyleHtml({
     signUrl,
     senderName: senderName || 'Someone',
-    senderEmail: process.env.EMAIL_FROM || '',
+    senderEmail: resolvedSenderEmail,
     signerName,
     documentTitle: documentTitle.endsWith('.pdf') ? documentTitle : `${documentTitle}.pdf`,
   });
 
-  const from = process.env.EMAIL_FROM;
+  const from = resolvedSenderEmail;
   const mailOptions = {
     to: signerEmail,
     from,
