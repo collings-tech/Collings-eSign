@@ -843,35 +843,19 @@ export default function SigningPage() {
                                 onClose={() => setEditingDateFieldId(null)}
                                 autoFocus={true}
                                 fontSize={dynamicFontSize}
+                                className="signing-field-text-input"
                               />
                             ) : typeLower === "date" ? (
                               <div
-                                style={{ display: "flex", alignItems: "center", width: "100%", height: "100%", position: "relative", cursor: "pointer" }}
-                                onDoubleClick={() => setEditingDateFieldId(f.id)}
-                                title="Double-click to pick a date"
+                                style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", cursor: "pointer", display: "flex", alignItems: "center" }}
+                                onClick={() => setEditingDateFieldId(f.id)}
+                                title="Click to pick a date"
                               >
-                                <input
-                                  type="text"
-                                  className="signing-field-text-input"
-                                  style={{ ...textFormatStyle, flex: 1, paddingRight: "30px", cursor: "pointer", pointerEvents: "none", userSelect: "none" }}
-                                  value={value}
-                                  readOnly
-                                  tabIndex={-1}
-                                  placeholder="DD/MM/YYYY"
-                                  aria-label={label}
-                                />
-                                <i 
-                                  className="lni lni-calendar-days" 
-                                  style={{ 
-                                    position: "absolute", 
-                                    right: "8px", 
-                                    fontSize: dynamicFontSize, 
-                                    color: "#64748b",
-                                    cursor: "pointer",
-                                    pointerEvents: "none"
-                                  }} 
-                                  aria-hidden 
-                                />
+                                <span
+                                  style={{ ...textFormatStyle, width: "100%", height: "100%", display: "flex", alignItems: "center", padding: "0 0.55rem", boxSizing: "border-box", userSelect: "none", color: value ? "inherit" : "#999" }}
+                                >
+                                  {value || "DD/MM/YYYY"}
+                                </span>
                               </div>
                             ) : typeLower === "text" ? (
                               <textarea

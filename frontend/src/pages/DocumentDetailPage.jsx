@@ -1664,7 +1664,7 @@ function DocumentDetailPage() {
                                 const hPct = f.hPct != null ? f.hPct : 6;
                                 const fontScale = Math.max(0.5, Math.min(1, availableWidth / 800));
                                 const baseRem = Math.max(0.5, Math.min(1.2, hPct * 0.15));
-                                const dynamicFontSize = `${Math.max(8, Math.round(baseRem * 16 * fontScale))}px`;
+                                const dynamicFontSize = `${Math.max(14, Math.round(baseRem * 16 * fontScale))}px`;
                                 return (
                                   <div
                                     key={f.id}
