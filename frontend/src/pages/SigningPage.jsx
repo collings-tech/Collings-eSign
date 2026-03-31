@@ -812,7 +812,12 @@ export default function SigningPage() {
                               position: "absolute",
                               left: `${xPct}%`,
                               top: `${yPct}%`,
-                              minWidth: `${wPct}%`,
+                              // Date fields are fixed-width (always "DD/MM/YYYY" length).
+                              // Using minWidth lets the measure span ("Date signed") expand the
+                              // container beyond the placed size — use width to lock it.
+                              ...(typeLower === "date"
+                                ? { width: `${wPct}%` }
+                                : { minWidth: `${wPct}%` }),
                               height: `${hPct}%`,
                             }}
                           >
@@ -822,7 +827,7 @@ export default function SigningPage() {
                               style={textFormatStyle}
                               aria-hidden
                             >
-                              {(typeof value === "string" ? value : String(value ?? "")) || placeholderText || "\u00a0"}
+                              {(typeof value === "string" ? value : String(value ?? "")) || (typeLower === "date" ? "DD/MM/YYYY" : placeholderText) || "\u00a0"}
                             </span>
                             {isReadOnly ? (
                               <div
@@ -852,7 +857,7 @@ export default function SigningPage() {
                                 title="Click to pick a date"
                               >
                                 <span
-                                  style={{ ...textFormatStyle, width: "100%", height: "100%", display: "flex", alignItems: "center", padding: "0 0.55rem", boxSizing: "border-box", userSelect: "none", color: value ? "inherit" : "#999" }}
+                                  style={{ ...textFormatStyle, width: "100%", height: "100%", display: "flex", alignItems: "center",  boxSizing: "border-box", userSelect: "none", color: value ? "inherit" : "#999" }}
                                 >
                                   {value || "DD/MM/YYYY"}
                                 </span>

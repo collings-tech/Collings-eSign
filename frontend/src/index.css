@@ -5048,7 +5048,6 @@ body.top-sidebar-open .top-sidebar {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   font-size: 0.875rem;
   font-weight: 400;
-  padding: 0.08rem 0.55rem;
   box-sizing: border-box;
 }
 
@@ -5095,21 +5094,6 @@ body.top-sidebar-open .top-sidebar {
 .signing-field-text-block:focus-within {
   border-color: #1a56db;
   box-shadow: 0 0 0 2px rgba(26, 86, 219, 0.25);
-}
-
-/* Native date input on mobile – restore appearance so the OS picker icon shows */
-.signing-field-text-input[type="date"] {
-  -webkit-appearance: auto;
-  appearance: auto;
-  cursor: pointer;
-  padding-right: 0.25rem;
-}
-/* Tappable area should be at least 44px on mobile */
-@media (max-width: 768px) {
-  .signing-field-text-input[type="date"] {
-    min-height: 2.75rem;
-    font-size: 1rem;
-  }
 }
 
 /* Strip AirDatepicker's own input styles when used inside a signing field */
@@ -8878,5 +8862,54 @@ body.top-sidebar-open .top-sidebar {
   }
   .template-view-title {
     font-size: 1.15rem;
+  }
+}
+
+/* ── AirDatepicker mobile overrides ───────────────────────────────────────── */
+@media (max-width: 600px) {
+  /* Fix the calendar in the center of the screen so it never overflows */
+  .air-datepicker {
+    position: fixed !important;
+    left: 50% !important;
+    top: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    width: 288px !important;
+    max-width: calc(100vw - 24px) !important;
+    z-index: 9999 !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.22) !important;
+    border-radius: 12px !important;
+  }
+
+  /* Scale down the day cells so the whole month fits */
+  .air-datepicker--content {
+    padding: 0 !important;
+  }
+  .air-datepicker-body--day-names,
+  .air-datepicker-body--cells.-days- {
+    grid-template-columns: repeat(7, 1fr) !important;
+  }
+  .air-datepicker-body--day-name,
+  .air-datepicker--cell.-day- {
+    width: auto !important;
+    height: 36px !important;
+    font-size: 0.8rem !important;
+  }
+  .air-datepicker--cell.-day- {
+    border-radius: 6px !important;
+  }
+  .air-datepicker--nav {
+    padding: 0.4rem 0.5rem !important;
+    font-size: 0.9rem !important;
+  }
+  .air-datepicker--nav-title {
+    font-size: 0.95rem !important;
+  }
+  .air-datepicker--buttons {
+    padding: 0.4rem 0.6rem !important;
+    gap: 0.5rem !important;
+  }
+  .air-datepicker--button {
+    font-size: 0.8rem !important;
+    padding: 0.3rem 0.6rem !important;
   }
 }
