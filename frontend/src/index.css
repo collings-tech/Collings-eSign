@@ -5097,6 +5097,21 @@ body.top-sidebar-open .top-sidebar {
   box-shadow: 0 0 0 2px rgba(26, 86, 219, 0.25);
 }
 
+/* Native date input on mobile – restore appearance so the OS picker icon shows */
+.signing-field-text-input[type="date"] {
+  -webkit-appearance: auto;
+  appearance: auto;
+  cursor: pointer;
+  padding-right: 0.25rem;
+}
+/* Tappable area should be at least 44px on mobile */
+@media (max-width: 768px) {
+  .signing-field-text-input[type="date"] {
+    min-height: 2.75rem;
+    font-size: 1rem;
+  }
+}
+
 /* Strip AirDatepicker's own input styles when used inside a signing field */
 .signing-field-text-block .signing-field-text-input.air-datepicker-input {
   border: none !important;
