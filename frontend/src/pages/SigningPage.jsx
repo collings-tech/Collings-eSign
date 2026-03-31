@@ -858,7 +858,7 @@ export default function SigningPage() {
                                 </span>
                               </div>
                             ) : typeLower === "text" ? (
-                              <textarea
+                              <input
                                 className="signing-field-text-input signing-field-textarea"
                                 style={textFormatStyle}
                                 value={value}
