@@ -1902,6 +1902,78 @@ body.top-sidebar-open .top-sidebar {
   border: 1px solid var(--color-border);
 }
 
+/* Delete button in the prepare header — visible when a field is selected */
+.prepare-header-delete-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #ef4444;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(239,68,68,0.35);
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+  animation: prepare-delete-btn-pop 0.15s ease;
+}
+.prepare-header-delete-btn i {
+  font-size: 1rem;
+}
+.prepare-header-delete-btn:hover {
+  background: #dc2626;
+  box-shadow: 0 3px 12px rgba(239,68,68,0.45);
+}
+.prepare-header-delete-btn:active {
+  background: #b91c1c;
+  transform: scale(0.96);
+}
+@keyframes prepare-delete-btn-pop {
+  from { opacity: 0; transform: scale(0.85); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* Full-screen overlay shown while document is being sent */
+.prepare-sending-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.prepare-sending-overlay-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  background: #fff;
+  border-radius: 14px;
+  padding: 40px 56px;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.18);
+}
+.prepare-sending-spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid #e5e7eb;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: prepare-spin 0.75s linear infinite;
+}
+@keyframes prepare-spin {
+  to { transform: rotate(360deg); }
+}
+.prepare-sending-overlay-text {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #374151;
+  letter-spacing: 0.01em;
+}
+
 /* Prepare document view (after Next - Collings eSign-style) */
 .prepare-shell {
   height: 100vh;
@@ -2407,15 +2479,15 @@ body.top-sidebar-open .top-sidebar {
 
 .prepare-placed-field {
   position: absolute;
-  border: 2px solid rgba(59, 130, 246, 0.5);
+  border: 1.5px solid rgba(59, 130, 246, 0.5);
   background: rgba(239, 246, 255, 0.9);
-  border-radius: 4px;
+  border-radius: 3px;
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0 0.5rem;
+  gap: 0.15rem;
+  padding: 0 0.2rem;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: 1.1rem;
   color: rgba(85, 197, 208, 1);
   box-sizing: border-box;
   touch-action: none;
@@ -2449,7 +2521,7 @@ body.top-sidebar-open .top-sidebar {
 }
 
 .prepare-placed-field-icon {
-  font-size: 1rem;
+  font-size: 0.7rem;
   flex-shrink: 0;
 }
 
@@ -2459,20 +2531,36 @@ body.top-sidebar-open .top-sidebar {
   align-items: stretch;
   overflow: hidden;
 }
-/* Checkbox / Radio: compact – small square/circle + label inline */
-.prepare-placed-field-checkbox,
+/* Checkbox: full-area box preview – centered SVG square with no padding */
+.prepare-placed-field-checkbox {
+  padding: 0;
+  min-height: 0;
+  justify-content: center;
+  align-items: center;
+}
+
+.prepare-placed-field-checkbox-preview {
+  width: 80%;
+  height: 80%;
+  min-width: 8px;
+  min-height: 8px;
+  display: block;
+  color: inherit;
+  pointer-events: none;
+}
+
+/* Radio: compact – circle + label inline */
 .prepare-placed-field-radio {
-  padding: 0.15rem 0.35rem;
+  padding: 0 0.15rem;
   min-height: 0;
 }
-.prepare-placed-field-checkbox .prepare-placed-field-icon,
 .prepare-placed-field-radio .prepare-placed-field-icon {
   font-size: 0.85rem;
 }
 
 /* Data input fields (Text, Number, Dropdown, etc.): rectangle – shorter height */
 .prepare-placed-field-data-rect {
-  padding: 0.2rem 0.4rem;
+  padding: 0 0.2rem;
   min-height: 0;
 }
 
@@ -2655,6 +2743,19 @@ body.top-sidebar-open .top-sidebar {
 }
 
 .prepare-right-fab:hover {
+  background: var(--color-bg-hover);
+}
+
+/* When a field is selected: darker border + bolder shadow to signal it's about that field */
+.prepare-right-fab.prepare-right-fab-properties {
+  background: var(--color-bg-card);
+  color: var(--color-text);
+  border-color: #374151;
+  border-width: 2px;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.22);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.prepare-right-fab.prepare-right-fab-properties:hover {
   background: var(--color-bg-hover);
 }
 
@@ -3728,6 +3829,7 @@ body.top-sidebar-open .top-sidebar {
   color: var(--color-accent-hover);
   border-bottom-color: var(--color-accent-hover);
   border-radius: var(--radius) var(--radius) 0 0;
+  color: var(--color-text);
 }
 
 .agreement-detail-recipients-panel,
@@ -4114,6 +4216,317 @@ body.top-sidebar-open .top-sidebar {
   color: var(--color-text);
 }
 
+/* ── Agreement detail: mobile responsive ── */
+@media (max-width: 768px) {
+  .agreement-detail-shell {
+    min-height: 100svh;
+    background: var(--color-bg-subtle);
+  }
+
+  /* ── Header card ── */
+  .agreement-detail-status-row {
+    position: relative;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    padding: 1.25rem 1rem 1rem;
+    border-bottom: none;
+    border-radius: 0;
+    box-shadow: 0 1px 0 var(--color-border);
+  }
+
+  /* Float the ⋯ / Sign actions to top-right corner */
+  .agreement-detail-actions {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    width: auto;
+    gap: 0.5rem;
+  }
+
+  .agreement-detail-more-btn {
+    width: 2.25rem;
+    height: 2.25rem;
+    font-size: 1.125rem;
+    border-radius: 8px;
+  }
+
+  .agreement-detail-sign-btn {
+    padding: 0.45rem 1rem;
+    font-size: 0.8125rem;
+    border-radius: 8px;
+  }
+
+  /* Status badge styled as a pill */
+  .agreement-detail-status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.7rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #5b21b6;
+    background: #ede9fe;
+    border-radius: 999px;
+    margin-bottom: 0.6rem;
+  }
+
+  .agreement-detail-status-icon {
+    font-size: 0.8rem;
+  }
+
+  .agreement-detail-expiring {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    margin-top: 0.25rem;
+    margin-bottom: 0.6rem;
+  }
+
+  .agreement-detail-title-block {
+    max-width: calc(100% - 3rem);
+    width: 100%;
+  }
+
+  .agreement-detail-doc-title {
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.35;
+    word-break: break-word;
+    margin-bottom: 0.5rem;
+  }
+
+  .agreement-detail-from {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.8125rem;
+    color: var(--color-text-muted);
+    overflow: hidden;
+  }
+
+  .agreement-detail-from-avatar {
+    width: 1.5rem;
+    height: 1.5rem;
+    flex-shrink: 0;
+  }
+
+  .agreement-detail-from-email {
+    font-size: 0.75rem;
+    color: #5b21b6;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ── Body stacks vertically ── */
+  .agreement-detail-body {
+    flex-direction: column;
+    overflow: visible;
+    overflow-y: auto;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    background: var(--color-bg-subtle);
+  }
+
+  .agreement-detail-main {
+    border-right: none;
+    border-bottom: none;
+    overflow: visible;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 0 0 1px var(--color-border);
+  }
+
+  /* ── Tabs ── */
+  .agreement-detail-tabs {
+    padding: 0 1rem;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .agreement-detail-tab {
+    padding: 0.75rem 0.875rem;
+    font-size: 0.875rem;
+  }
+
+  /* ── Panels ── */
+  .agreement-detail-recipients-panel,
+  .agreement-detail-details-panel {
+    overflow: visible;
+    padding: 1rem;
+  }
+
+  /* ── Signing order toolbar ── */
+  .agreement-detail-recipients-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    padding: 0.625rem 0.75rem;
+    background: var(--color-bg-subtle);
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+  }
+
+  .agreement-detail-signing-order {
+    font-size: 0.8125rem;
+    padding: 0.3rem 0.7rem;
+    border-radius: 6px;
+  }
+
+  .agreement-detail-toggle {
+    font-size: 0.8125rem;
+    gap: 0.5rem;
+  }
+
+  /* ── Recipient row ── */
+  .agreement-detail-recipient-item {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-rows: auto auto;
+    gap: 0 0.75rem;
+    padding: 0.875rem 0;
+    align-items: start;
+  }
+
+  .agreement-detail-recipient-avatar {
+    grid-row: 1 / 3;
+    align-self: center;
+  }
+
+  .agreement-detail-recipient-info {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .agreement-detail-recipient-status {
+    grid-column: 2;
+    grid-row: 2;
+    margin-left: 0;
+    margin-top: 0.3rem;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.5rem;
+    font-size: 0.78rem;
+  }
+
+  .agreement-detail-recipient-date {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+  }
+
+  /* ── Details dl ── */
+  .agreement-detail-detail-row {
+    grid-template-columns: 1fr;
+    gap: 0.1rem;
+    padding: 0.625rem 0;
+  }
+
+  .agreement-detail-detail-row dt {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-muted);
+    margin-bottom: 0.15rem;
+  }
+
+  .agreement-detail-detail-row dd {
+    font-size: 0.875rem;
+    word-break: break-all;
+  }
+
+  /* ── Documents sidebar card ── */
+  .agreement-detail-sidebar {
+    width: 100%;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 1rem;
+    border-top: none;
+    border-radius: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.07), 0 0 0 1px var(--color-border);
+    background: var(--color-bg-card);
+  }
+
+  .agreement-detail-sidebar-title {
+    font-size: 0.8125rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-muted);
+    margin-bottom: 0.25rem;
+  }
+
+  /* Horizontal doc item: thumb on left, meta on right */
+  .agreement-detail-doc-thumb-wrap {
+    width: 70px;
+    aspect-ratio: 3 / 4;
+    min-height: unset;
+    flex-shrink: 0;
+    border-radius: 6px;
+    border-color: var(--color-border);
+    float: left;
+    margin-right: 0.875rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .agreement-detail-doc-meta {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.25rem;
+    overflow: hidden;
+    padding-top: 0.25rem;
+  }
+
+  .agreement-detail-doc-filename {
+    font-size: 0.875rem;
+    font-weight: 600;
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.3;
+  }
+
+  /* ── Footer ── */
+  .agreement-detail-footer {
+    padding: 0.875rem 0.75rem;
+    background: var(--color-bg-subtle);
+    border-top: none;
+  }
+
+  .agreement-detail-btn {
+    display: block;
+    width: 100%;
+    text-align: center;
+    padding: 0.7rem 1rem;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    border-radius: 10px;
+    border: 1.5px solid var(--color-border-medium);
+    background: var(--color-bg-card);
+    color: var(--color-text-secondary);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  }
+
+  .agreement-detail-btn.secondary:hover,
+  .agreement-detail-btn.secondary:active {
+    background: var(--color-border);
+    color: var(--color-text);
+  }
+}
+
+@media (max-width: 480px) {
+  .agreement-detail-doc-title {
+    font-size: 0.9375rem;
+  }
+
+  .agreement-detail-tab {
+    padding: 0.7rem 0.75rem;
+    font-size: 0.8125rem;
+  }
+}
+
 .narrow {
   max-width: 560px;
   margin: 0 auto;
@@ -4353,6 +4766,8 @@ body.top-sidebar-open .top-sidebar {
 .signing-download-btn {
   text-decoration: none;
   display: inline-block;
+  border: none;
+  cursor: pointer;
 }
 .signing-download-btn:hover {
   color: var(--color-text-inverse);
@@ -4419,10 +4834,13 @@ body.top-sidebar-open .top-sidebar {
   padding: 0.5rem 1.25rem;
   background: #059669;
   color: #fff;
+  border: none;
   border-radius: 8px;
   font-weight: 600;
   text-decoration: none;
   cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
 }
 .signing-completed-download:hover {
   background: #047857;
@@ -4486,7 +4904,7 @@ body.top-sidebar-open .top-sidebar {
   width: 100%;
   min-width: 0;
   min-height: 0;
-  background: var(--color-bg-card);
+  background: #cbd5e1;
   box-shadow: 0 4px 20px rgba(0,0,0,0.08);
   z-index: 0;
   overflow: auto;
@@ -4609,39 +5027,40 @@ body.top-sidebar-open .top-sidebar {
 /* Typable text fields: name, email, company, title, text, number – normal font */
 .signing-field-text-block {
   position: relative;
-  background: #ffffff;
-  border: 2px solid #7c3aed;
-  border-radius: 4px;
-  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
-  padding: 0.15rem 0.4rem;
+  background: transparent;
+  border: 1.5px solid #4169e1;
+  border-radius: 2px;
   padding: 0;
   display: flex;
   align-items: stretch;
-  min-width: 0;
-  overflow: hidden;
+  /* overflow: visible lets the block grow beyond its original PDF bounds */
+  overflow: visible;
 }
 
-/* Hidden span used to measure text width so the field can grow with content */
+/* Hidden span sits in the flex flow so its natural width drives the block's width.
+   The input overlays it absolutely, so the block always matches the text width. */
 .signing-field-text-measure {
-  position: absolute;
-  left: 0;
-  top: 0;
+  flex-shrink: 0;
   visibility: hidden;
   pointer-events: none;
-  white-space: pre;
+  /* nowrap so the span measures the full single-line text width */
+  white-space: nowrap;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   font-size: 0.875rem;
   font-weight: 400;
-  padding: 0.25rem 0.5rem;
   box-sizing: border-box;
 }
 
 .signing-field-text-input {
+  /* Overlay the hidden span so the visible field fills the block exactly */
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   min-height: 0;
   min-width: 0;
-  padding: 0.25rem 0.5rem;
+  padding: 0.08rem 0.55rem;
   border: none;
   border-radius: 4px;
   font: inherit;
@@ -4649,21 +5068,50 @@ body.top-sidebar-open .top-sidebar {
   font-size: inherit;
   font-weight: 400;
   color: #1f2937;
-  background: #faf5ff;
+  background: #fffde7;
   box-sizing: border-box;
   outline: none;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
+  white-space: nowrap;
+  -webkit-appearance: none;
+  appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.signing-field-textarea {
+  /* No auto-wrap; the block expands horizontally with content */
+  white-space: nowrap;
+  overflow: hidden;
+  resize: none;
 }
 
 .signing-field-text-input::placeholder {
-  color: #6b21a8;
-  opacity: 0.85;
+  color: #999;
+  opacity: 1;
+}
+
+.signing-field-text-block:focus-within {
+  border-color: #1a56db;
+  box-shadow: 0 0 0 2px rgba(26, 86, 219, 0.25);
+}
+
+/* Strip AirDatepicker's own input styles when used inside a signing field */
+.signing-field-text-block .signing-field-text-input.air-datepicker-input {
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  padding: 0.08rem 0.55rem !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  box-sizing: border-box !important;
 }
 
 .signing-field-text-input:focus {
-  outline: 2px solid #7c3aed;
-  outline-offset: -2px;
+  outline: none;
 }
 
 .signing-field-readonly .signing-field-text-input,
@@ -4674,49 +5122,65 @@ body.top-sidebar-open .top-sidebar {
   color: #4b5563;
 }
 
+.signing-field-readonly-text {
+  width: 100%;
+  height: 100%;
+  padding: 0.25rem 0.5rem;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: #1f2937;
+  background: transparent;
+  user-select: text;
+  cursor: default;
+}
+
 .signing-field-checkbox-block {
   display: flex;
   align-items: center;
+  justify-content: center;
   background: #ffffff;
-  border: 2px solid #7c3aed;
-  border-radius: 4px;
-  box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
-  padding: 0.1rem 0.3rem;
-  min-height: 0;
-}
-
-.signing-field-checkbox-label {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  width: 100%;
-  height: 100%;
+  border: 1.5px solid #5a5a5a;
+  border-radius: 2px;
+  box-shadow: none;
   padding: 0;
+  min-height: 0;
   cursor: pointer;
-  margin: 0;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.1s, border-color 0.1s;
 }
 
-.signing-field-checkbox-input {
-  flex-shrink: 0;
-  width: 0.95rem;
-  height: 0.95rem;
-  accent-color: #7c3aed;
-  cursor: pointer;
+.signing-field-checkbox-block.is-checked {
+  background: #ffffff;
+  border-color: #333333;
 }
 
-.signing-field-checkbox-caption {
-  font-size: 0.8rem;
-  color: #1f2937;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.signing-field-checkbox-block.is-required-unchecked {
+  background: #fef08a;
+  border-color: #ca8a04;
+}
+
+.signing-field-checkbox-block:focus-visible {
+  outline: 2px solid #7c3aed;
+  outline-offset: 1px;
+}
+
+.signing-field-checkbox-check {
+  width: 75%;
+  height: 75%;
+  display: block;
+  pointer-events: none;
 }
 
 .signing-field-radio-block {
   display: flex;
   align-items: center;
   background: #ffffff;
-  border: 2px solid #7c3aed;
+  border: 1px solid var(--color-accent-hover);
   border-radius: 4px;
   box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
   padding: 0.15rem 0.35rem;
@@ -4742,13 +5206,13 @@ body.top-sidebar-open .top-sidebar {
 .signing-field-radio-option input[type="radio"] {
   width: 0.95rem;
   height: 0.95rem;
-  accent-color: #7c3aed;
+  accent-color: var(--color-accent-hover);
   cursor: pointer;
 }
 
 .signing-field-dropdown-block {
   background: #ffffff;
-  border: 2px solid #7c3aed;
+  border: 2px solid var(--color-accent-hover);
   border-radius: 4px;
   box-shadow: 0 2px 6px rgba(124, 58, 237, 0.25);
   padding: 0.15rem 0.4rem;
@@ -4768,8 +5232,8 @@ body.top-sidebar-open .top-sidebar {
 }
 
 .signing-field-dropdown-select:focus {
-  outline: 2px solid #7c3aed;
-  outline-offset: -2px;
+  outline: 1px solid var(--color-accent-hover);
+  outline-offset: -1px;
 }
 
 /* Unsigned: purple box with "Sign" + pencil – always visible */
@@ -8018,7 +8482,6 @@ body.top-sidebar-open .top-sidebar {
     min-width: 0;
   }
   .signing-field-text-input {
-    padding: 0.2rem 0.4rem;
   }
   .signing-field-btn {
     padding: 0 0.3rem;
@@ -8027,7 +8490,6 @@ body.top-sidebar-open .top-sidebar {
   .signing-field-dropdown-select {
     padding: 0.2rem 0.4rem;
   }
-  .signing-field-checkbox-caption,
   .signing-field-radio-option span {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -8400,5 +8862,54 @@ body.top-sidebar-open .top-sidebar {
   }
   .template-view-title {
     font-size: 1.15rem;
+  }
+}
+
+/* ── AirDatepicker mobile overrides ───────────────────────────────────────── */
+@media (max-width: 600px) {
+  /* Fix the calendar in the center of the screen so it never overflows */
+  .air-datepicker {
+    position: fixed !important;
+    left: 50% !important;
+    top: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    width: 288px !important;
+    max-width: calc(100vw - 24px) !important;
+    z-index: 9999 !important;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.22) !important;
+    border-radius: 12px !important;
+  }
+
+  /* Scale down the day cells so the whole month fits */
+  .air-datepicker--content {
+    padding: 0 !important;
+  }
+  .air-datepicker-body--day-names,
+  .air-datepicker-body--cells.-days- {
+    grid-template-columns: repeat(7, 1fr) !important;
+  }
+  .air-datepicker-body--day-name,
+  .air-datepicker--cell.-day- {
+    width: auto !important;
+    height: 36px !important;
+    font-size: 0.8rem !important;
+  }
+  .air-datepicker--cell.-day- {
+    border-radius: 6px !important;
+  }
+  .air-datepicker--nav {
+    padding: 0.4rem 0.5rem !important;
+    font-size: 0.9rem !important;
+  }
+  .air-datepicker--nav-title {
+    font-size: 0.95rem !important;
+  }
+  .air-datepicker--buttons {
+    padding: 0.4rem 0.6rem !important;
+    gap: 0.5rem !important;
+  }
+  .air-datepicker--button {
+    font-size: 0.8rem !important;
+    padding: 0.3rem 0.6rem !important;
   }
 }

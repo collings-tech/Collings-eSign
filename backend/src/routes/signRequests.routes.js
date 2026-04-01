@@ -47,6 +47,25 @@ router.post("/:documentId", requireAuth, async (req, res) => {
   }
 });
 
+// Delete a single sign request (only for draft docs, unsigned signers, owner only)
+router.delete("/:documentId/:signRequestId", requireAuth, async (req, res) => {
+  try {
+    const { documentId, signRequestId } = req.params;
+    const doc = await Document.findOne({ _id: documentId, ownerId: req.user.id });
+    if (!doc) return res.status(404).json({ error: "Document not found" });
+    const signReq = await SignRequest.findOne({ _id: signRequestId, documentId });
+    if (!signReq) return res.status(404).json({ error: "Sign request not found" });
+    if (signReq.status === "signed") {
+      return res.status(400).json({ error: "Cannot remove a recipient who has already signed" });
+    }
+    await SignRequest.deleteOne({ _id: signRequestId });
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // List sign requests for a document (owner or signer)
 router.get("/:documentId", requireAuth, async (req, res) => {
   try {
@@ -70,7 +89,7 @@ router.get("/:documentId", requireAuth, async (req, res) => {
       }
     }
     const signReqs = await SignRequest.find({ documentId })
-      .sort({ createdAt: -1 })
+      .sort({ order: 1, createdAt: 1 })
       .lean();
     const emails = [...new Set(signReqs.map((sr) => (sr.signerEmail || "").toLowerCase()).filter(Boolean))];
     const usersByEmail = {};

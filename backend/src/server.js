@@ -2,9 +2,11 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+const bcrypt = require('bcrypt');
 const { connectMongo } = require('./db/mongoose');
-const { port, uploadDir, clientOrigin } = require('./config/env');
+const { port, uploadDir, clientOrigin, defaultAdminEmail, defaultAdminPassword, defaultAdminName } = require('./config/env');
 const { authOptional } = require('./middleware/auth');
+const User = require('./models/User');
 const authRoutes = require('./routes/auth.routes');
 const documentsRoutes = require('./routes/documents.routes');
 const signRequestsRoutes = require('./routes/signRequests.routes');
@@ -46,9 +48,33 @@ app.get('/health', (req, res) => {
 
 // TODO: mount routes (auth, documents, signRequests, signing)
 
+async function seedDefaultAdmin() {
+  if (!defaultAdminEmail || !defaultAdminPassword) {
+    console.log('DEFAULT_ADMIN_EMAIL or DEFAULT_ADMIN_PASSWORD not set — skipping admin seed.');
+    return;
+  }
+
+  const adminCount = await User.countDocuments({ roles: 'admin' });
+  if (adminCount > 0) {
+    console.log(`Admin seed skipped — ${adminCount} admin user(s) already exist.`);
+    return;
+  }
+
+  const passwordHash = await bcrypt.hash(defaultAdminPassword, 10);
+  await User.create({
+    email: defaultAdminEmail,
+    passwordHash,
+    name: defaultAdminName,
+    roles: ['admin'],
+  });
+
+  console.log(`Default admin created: ${defaultAdminEmail}`);
+}
+
 async function start() {
   try {
     await connectMongo();
+    await seedDefaultAdmin();
     app.listen(port, () => {
       console.log(`Backend listening on port ${port}`);
     });

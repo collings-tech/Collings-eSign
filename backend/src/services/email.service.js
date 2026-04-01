@@ -118,7 +118,8 @@ async function sendDocuSignStyleSignEmail({
   signerName,
   token,
   documentTitle,
-  senderName
+  senderName,
+  senderEmail,
 }) {
   const t = getTransporter();
   if (!t) {
@@ -128,15 +129,17 @@ async function sendDocuSignStyleSignEmail({
   const signUrl = `${clientOrigin.replace(/\/+$/, '')}/sign/${token}`;
   const subject = `Please complete with Collings eSign: ${documentTitle}`;
 
+  const resolvedSenderEmail = senderEmail || process.env.EMAIL_FROM || process.env.SMTP_USER || '';
+
   const html = buildDocuSignStyleHtml({
     signUrl,
     senderName: senderName || 'Someone',
-    senderEmail: process.env.EMAIL_FROM || '',
+    senderEmail: resolvedSenderEmail,
     signerName,
     documentTitle: documentTitle.endsWith('.pdf') ? documentTitle : `${documentTitle}.pdf`,
   });
 
-  const from = process.env.EMAIL_FROM;
+  const from = resolvedSenderEmail;
   const mailOptions = {
     to: signerEmail,
     from,
@@ -635,6 +638,76 @@ async function sendDocumentViewedNotificationToSender({ to, senderName, document
   }
 }
 
+/** Send the fully-signed document (PDF attachment) to a recipient when all parties have signed. */
+function buildSignedDocToRecipientHtml({ documentTitle, recipientName }) {
+  const displayTitle = documentTitle.endsWith('.pdf') ? documentTitle : `${documentTitle}.pdf`;
+  const safeDocTitle = displayTitle.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const safeName = (recipientName || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  return `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#f5f5f5;">
+  <div style="max-width:600px; margin:0 auto; background:#fff;">
+    <div style="height:4px; background: linear-gradient(90deg, #38a5b0 0%, #55c5d0 100%);"></div>
+    <div style="padding:24px 24px 16px;">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:24px;">
+       <img src="${LOGO_URL}" alt="Collings" style="height:22px;width:auto;display:inline-block;vertical-align:middle;" /><span style="font-size:14px; font-weight:500; color:#000000; vertical-align:middle; margin-left:2px;">eSign</span>
+      </div>
+      <div style="background:#55c5d082; border-radius:12px; padding:32px 24px; text-align:center;">
+        <table cellpadding="0" cellspacing="0" border="0" align="center" style="width:48px; height:48px; margin:0 auto 16px; background:rgba(0,0,0,0.15); border-radius:50%;">
+          <tr><td align="center" valign="middle"><img src="${PEN_ICON_URL}" alt="" style="width:28px; height:28px; display:block; margin:0 auto;" /></td></tr>
+        </table>
+        <p style="margin:0 0 24px; color:#000; font-size:16px; line-height:1.5;">
+          All parties have signed <strong>${safeDocTitle}</strong>.
+        </p>
+        <p style="margin:0; color:#57595c; font-size:14px;">A copy of the fully signed document is attached to this email for your records.</p>
+      </div>
+    </div>
+    <div style="padding:8px 24px 24px; color:#57595c; font-size:14px; line-height:1.6;">
+      ${safeName ? `<p style="margin:0 0 8px;">Hi ${safeName},</p>` : ''}
+      <p style="margin:0 0 0;">Thank You,<br/>Collings eSign</p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
+async function sendSignedDocumentToRecipient({ to, recipientName, documentTitle, pdfBuffer, fileName }) {
+  const t = getTransporter();
+  if (!t) {
+    console.warn('[email] SMTP not configured – skipping signed-doc-to-recipient email to', to);
+    return;
+  }
+
+  const displayTitle = fileName || (documentTitle.endsWith('.pdf') ? documentTitle : `${documentTitle}.pdf`);
+  const subject = `Completed document: ${documentTitle}`;
+  const html = buildSignedDocToRecipientHtml({ documentTitle: displayTitle, recipientName });
+
+  const mailOptions = {
+    to,
+    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    subject,
+    text: `All parties have signed "${documentTitle}".\n\nA copy of the fully signed document is attached to this email for your records.\n\nThank You,\nCollings eSign`,
+    html,
+    attachments: [
+      {
+        filename: displayTitle,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      },
+    ],
+  };
+
+  try {
+    await t.sendMail(mailOptions);
+    console.log('[email] Signed document sent to recipient:', to);
+  } catch (err) {
+    console.error('[email] Failed to send signed document to recipient', to, err);
+  }
+}
+
 module.exports = {
   sendSignRequestEmail,
   sendDocuSignStyleSignEmail,
@@ -644,6 +717,7 @@ module.exports = {
   sendSignedWaitingForOthersEmail,
   sendDocumentCompletedEmail,
   sendSignedDocumentToSender,
+  sendSignedDocumentToRecipient,
   sendDocumentViewedNotificationToSender,
   sendSignupRequestNotificationEmail,
   sendSignupApprovedEmail,

@@ -506,6 +506,48 @@ router.get('/:id/file-url', requireAuth, async (req, res) => {
   }
 });
 
+// Download PDF as attachment (forces save-to-file on all browsers including iOS Safari)
+router.get('/:id/download', requireAuth, async (req, res) => {
+  try {
+    let doc = await Document.findOne({ _id: req.params.id, ownerId: req.user.id }).lean();
+    if (!doc) {
+      const myEmail = (req.user.email || '').toLowerCase();
+      const signReq = await SignRequest.findOne({
+        documentId: req.params.id,
+        signerEmail: new RegExp(`^${myEmail.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'),
+      }).lean();
+      if (!signReq) return res.status(404).json({ error: 'Document not found' });
+      doc = await Document.findOne({ _id: req.params.id, status: { $ne: 'deleted' } }).lean();
+    }
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+
+    const safeTitle = (doc.title || 'document').replace(/[^a-z0-9 _\-\.]/gi, '_').replace(/\.pdf$/i, '');
+    const filename = `${safeTitle}.pdf`;
+
+    if (storageService.isStorageConfigured()) {
+      const key = doc.signedKey || doc.originalKey;
+      if (!key) return res.status(404).json({ error: 'Document file not found' });
+      const buffer = await storageService.download(key);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', buffer.length);
+      return res.send(buffer);
+    }
+
+    const filePath = doc.signedFilePath || doc.originalFilePath;
+    if (!filePath) return res.status(404).json({ error: 'Document file not found' });
+    const fullPath = path.join(uploadDir, filePath);
+    const buffer = await fs.readFile(fullPath);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', buffer.length);
+    return res.send(buffer);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get single document (owner or signer)
 router.get('/:id', requireAuth, async (req, res) => {
   try {
@@ -765,7 +807,7 @@ router.post('/:id/resend', requireAuth, async (req, res) => {
         }
       }
       const isOwnerSigner = signerEmail.toLowerCase() === ownerEmail;
-      if (!isOwnerSigner) {
+      if (!isOwnerSigner || !doc.signingOrder) {
         try {
           await sendDocuSignStyleSignEmail({
             signerEmail,

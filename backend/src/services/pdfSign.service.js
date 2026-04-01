@@ -167,7 +167,8 @@ async function embedSignatureInPdf(doc, signRequest) {
     return t === "signature" || t === "initial";
   }).length;
   const firstPage = pages[0] || null;
-  console.log("[pdfSign] Embedding signature:", { fields: fields.length, sigFields: sigFieldCount, useStorage });
+  const sourceFile = useStorage ? (doc.signedKey || doc.originalKey) : (doc.signedFilePath || doc.originalFilePath);
+  console.log("[pdfSign] Embedding signature for", signRequest.signerEmail, "| source:", sourceFile, "| fields:", fields.length, "| sigFields:", sigFieldCount);
 
   for (const f of fields) {
     const typeLower = String(f.type || "signature").toLowerCase();
@@ -478,16 +479,230 @@ async function embedSignatureInPdf(doc, signRequest) {
   }
 
   const outBytes = await pdfDoc.save();
+  const outBuffer = Buffer.from(outBytes);
   if (useStorage) {
     const signedKeyPath = storageService.signedKey(doc._id.toString());
-    await storageService.upload(signedKeyPath, Buffer.from(outBytes));
+    await storageService.upload(signedKeyPath, outBuffer);
     console.log("[pdfSign] Saved signed PDF to storage:", signedKeyPath);
-    return signedKeyPath;
+    return { key: signedKeyPath, buffer: outBuffer };
   }
   const outFilename = `signed-${doc._id.toString()}-${Date.now()}.pdf`;
   const outPath = path.join(uploadDir, outFilename);
   await fs.writeFile(outPath, outBytes);
   console.log("[pdfSign] Saved signed PDF to local:", outFilename);
+  return { key: outFilename, buffer: outBuffer };
+}
+
+/**
+ * Generate the final completed PDF by reading the ORIGINAL document and embedding ALL signers'
+ * signatures and field values in one pass. This is called once when every recipient has signed
+ * so the result is guaranteed to contain every signer's data regardless of signing order or race conditions.
+ * @param {Object} doc - Document mongoose document
+ * @param {Array}  allSignRequests - Array of all SignRequest objects for this document
+ * @returns {Promise<string>} Storage key or local filename (same contract as embedSignatureInPdf)
+ */
+async function embedAllSignaturesInPdf(doc, allSignRequests) {
+  const useStorage = doc.originalKey && storageService.isStorageConfigured();
+
+  // Always start from the ORIGINAL document so no incremental chain is needed
+  let pdfBytes;
+  if (useStorage) {
+    pdfBytes = await storageService.download(doc.originalKey);
+  } else {
+    pdfBytes = await fs.readFile(path.join(uploadDir, doc.originalFilePath));
+  }
+
+  const pdfDoc = await PDFDocument.load(pdfBytes);
+  pdfDoc.registerFontkit(fontkit);
+  const pages = pdfDoc.getPages();
+  const borderAsset = await embedBorderImage(pdfDoc);
+  const helvetica = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+  const textFieldTypes = ["name", "email", "company", "title", "text", "number", "stamp", "date", "dropdown", "checkbox", "radio"];
+  const FONT_COLOR_MAP = {
+    black: rgb(0, 0, 0), white: rgb(1, 1, 1), red: rgb(0.9, 0.1, 0.1),
+    blue: rgb(0.2, 0.2, 0.9), green: rgb(0.1, 0.5, 0.1), gray: rgb(0.5, 0.5, 0.5),
+    darkgray: rgb(0.25, 0.25, 0.25), "dark gray": rgb(0.25, 0.25, 0.25),
+  };
+  const getTextColor = (colorName) => {
+    if (!colorName || typeof colorName !== "string") return rgb(0, 0, 0);
+    return FONT_COLOR_MAP[String(colorName).toLowerCase().trim().replace(/\s+/g, "")] || rgb(0, 0, 0);
+  };
+  const getTextFont = async (pdfDoc, f) => {
+    const bold = f.bold === true;
+    const italic = f.italic === true;
+    const family = (f.fontFamily || "").toLowerCase();
+    let base = StandardFonts.Helvetica;
+    if (family.includes("times") || family.includes("georgia")) base = StandardFonts.TimesRoman;
+    else if (family.includes("courier") || family.includes("lucida console")) base = StandardFonts.Courier;
+    if (base === StandardFonts.TimesRoman) {
+      if (bold && italic) return pdfDoc.embedFont(StandardFonts.TimesRomanBoldItalic);
+      if (bold) return pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+      if (italic) return pdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+      return pdfDoc.embedFont(StandardFonts.TimesRoman);
+    }
+    if (base === StandardFonts.Courier) {
+      if (bold && italic) return pdfDoc.embedFont(StandardFonts.CourierBoldOblique);
+      if (bold) return pdfDoc.embedFont(StandardFonts.CourierBold);
+      if (italic) return pdfDoc.embedFont(StandardFonts.CourierOblique);
+      return pdfDoc.embedFont(StandardFonts.Courier);
+    }
+    if (bold && italic) return pdfDoc.embedFont(StandardFonts.HelveticaBoldOblique);
+    if (bold) return pdfDoc.embedFont(StandardFonts.HelveticaBold);
+    if (italic) return pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+    return pdfDoc.embedFont(StandardFonts.Helvetica);
+  };
+  const getFieldKey = (f) => (f.id != null && f.id !== "" ? f.id : `field-${f.page ?? 1}-${f.x ?? 0}-${f.y ?? 0}-${(f.type || "text")}`);
+
+  for (const signRequest of allSignRequests) {
+    const hasPerField = signRequest.fieldSignatureData && typeof signRequest.fieldSignatureData === "object" && Object.keys(signRequest.fieldSignatureData).length > 0;
+    const fields = signRequest.signatureFields || [];
+    const fieldValues = signRequest.fieldValues || {};
+    const signedById = signRequest._id ? String(signRequest._id).replace(/-/g, "").slice(-16) : "";
+
+    // Embed signature/initial fields for this signer
+    for (const f of fields) {
+      const typeLower = String(f.type || "signature").toLowerCase();
+      const isSig = typeLower === "signature" || typeLower === "initial";
+      if (!isSig) continue;
+
+      const signatureDataForField = hasPerField && f.id && signRequest.fieldSignatureData[f.id]
+        ? signRequest.fieldSignatureData[f.id]
+        : signRequest.signatureData;
+      if (!signatureDataForField) continue;
+
+      const pageIndex = Math.max(0, (f.page || 1) - 1);
+      const page = pages[pageIndex];
+      if (!page) continue;
+
+      const pageWidth = page.getWidth();
+      const pageHeight = page.getHeight();
+      const box = fieldToPdfBox(f, pageWidth, pageHeight);
+      const { x, yPdf, w, h } = box;
+
+      // Draw border
+      if (borderAsset?.embed) {
+        try {
+          const borderDims = borderAsset.embed.scaleToFit(w, h);
+          if (borderDims.width > 0 && borderDims.height > 0) {
+            page.drawImage(borderAsset.embed, { x, y: yPdf + (h - borderDims.height) / 2, width: borderDims.width, height: borderDims.height, opacity: 1 });
+          }
+        } catch { /* ignore */ }
+      }
+
+      const imageBuffer = await getSignatureImageBuffer(signatureDataForField);
+      if (imageBuffer) {
+        let embeddedImage = null;
+        try { embeddedImage = await pdfDoc.embedPng(imageBuffer); } catch { try { embeddedImage = await pdfDoc.embedJpg(imageBuffer); } catch { /* ignore */ } }
+        if (embeddedImage) {
+          try {
+            const sigDims = embeddedImage.scaleToFit(w, h * 0.7);
+            page.drawImage(embeddedImage, { x, y: yPdf + (h - sigDims.height) / 2, width: sigDims.width, height: sigDims.height, opacity: 1 });
+          } catch { /* ignore */ }
+        }
+      } else {
+        const typedData = parseTypedSignature(signatureDataForField);
+        if (typedData) {
+          let embeddedTypedFont = null;
+          if (typedData.font && (SIGNATURE_FONT_FILES[typedData.font] || FONT_CDN_URLS[typedData.font])) {
+            try {
+              let fontBytes = null;
+              try { fontBytes = await fs.readFile(path.join(FONTS_DIR, SIGNATURE_FONT_FILES[typedData.font])); } catch {
+                const cdnUrl = FONT_CDN_URLS[typedData.font];
+                if (cdnUrl) { const res = await fetch(cdnUrl); if (res.ok) fontBytes = Buffer.from(await res.arrayBuffer()); }
+              }
+              if (fontBytes?.length > 0) embeddedTypedFont = await pdfDoc.embedFont(fontBytes);
+            } catch { /* ignore */ }
+          }
+          try {
+            const isInitial = typeLower === "initial";
+            let text = isInitial && typedData.initials ? typedData.initials : (typedData.name || signRequest.signerName || "Signed");
+            text = text.trim().toLowerCase().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") || (signRequest.signerName || "Signed");
+            let fontSizePt = h * 0.55;
+            const fontToUse = embeddedTypedFont || helvetica;
+            let tw = fontToUse.widthOfTextAtSize(text, fontSizePt);
+            while (tw > w - 4 && fontSizePt > 5) { fontSizePt -= 1; tw = fontToUse.widthOfTextAtSize(text, fontSizePt); }
+            const drawOpts = { x: x + 7, y: yPdf + h * 0.3, size: fontSizePt, color: rgb(0, 0, 0) };
+            if (embeddedTypedFont) drawOpts.font = embeddedTypedFont;
+            page.drawText(text, drawOpts);
+          } catch { /* ignore */ }
+        } else {
+          try {
+            const signerName = (signRequest.signerName || "Signed").trim() || "Signed";
+            page.drawText(signerName, { x, y: yPdf + h * 0.3, size: Math.min(12, Math.max(8, h * 0.4)), font: helvetica, color: rgb(0, 0, 0) });
+          } catch { /* ignore */ }
+        }
+      }
+
+      // "Signed by" label
+      if (h >= 45) {
+        try { page.drawText("Signed by:", { x: x + 7, y: yPdf + h - Math.min(5, h * 0.15) - 3 - 2, size: Math.min(5, h * 0.15) + 2, font: helvetica, color: rgb(0, 0, 0) }); } catch { /* ignore */ }
+      }
+      if (signedById) {
+        try { page.drawText(signedById, { x: x + 7, y: yPdf + 1, size: Math.min(5, h * 0.15) + 2, font: helvetica, color: rgb(0, 0, 0) }); } catch { /* ignore */ }
+      }
+    }
+
+    // Embed text/checkbox/date fields for this signer
+    for (const f of fields) {
+      const typeLower = String(f.type || "signature").toLowerCase();
+      if (!textFieldTypes.includes(typeLower)) continue;
+      const fieldKey = getFieldKey(f);
+      let value = fieldValues[fieldKey] ?? fieldValues[f.id];
+      if (value == null || String(value).trim() === "") {
+        if (f.readOnly && typeLower === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
+        else if (typeLower === "checkbox") value = f.checked === true ? "Yes" : "";
+        else continue;
+      }
+
+      const pageIndex = Math.max(0, (f.page || 1) - 1);
+      const page = pages[pageIndex];
+      if (!page) continue;
+
+      const pageWidth = page.getWidth();
+      const pageHeight = page.getHeight();
+      const box = fieldToPdfBox(f, pageWidth, pageHeight);
+      const { x, yPdf, w: innerW, h: innerH } = box;
+
+      if (typeLower === "checkbox") {
+        const isChecked = String(value).trim() === "Yes" || String(value).trim() === "true";
+        if (!isChecked) continue;
+        try {
+          const textFont = await getTextFont(pdfDoc, f);
+          const caption = (f.caption ?? "").trim() || "";
+          const displayText = caption ? "X " + caption : "X";
+          page.drawText(displayText, { x: x + 1, y: yPdf + Math.min(3, innerH * 0.15), size: Math.min(12, Math.max(8, innerH * 0.6)), font: textFont, color: getTextColor(f.fontColor) });
+        } catch { /* ignore */ }
+        continue;
+      }
+
+      const text = String(value).trim();
+      let fontSizePt = f.fontSize != null && f.fontSize > 0 ? Math.min(72, Math.max(6, Number(f.fontSize))) : Math.min(12, Math.max(8, innerH * 0.7));
+      if (!Number.isFinite(fontSizePt) || fontSizePt <= 0) fontSizePt = 10;
+      try {
+        const textFont = await getTextFont(pdfDoc, f);
+        const textX = x + 1;
+        const textY = yPdf + Math.min(3, innerH * 0.15);
+        page.drawText(text, { x: textX, y: textY, size: fontSizePt, font: textFont, color: getTextColor(f.fontColor) });
+        if (f.underline) {
+          const textWidth = textFont.widthOfTextAtSize(text, fontSizePt);
+          page.drawLine({ start: { x: textX, y: textY - 1 }, end: { x: textX + textWidth, y: textY - 1 }, thickness: Math.max(0.5, fontSizePt / 18), color: getTextColor(f.fontColor) });
+        }
+      } catch { /* ignore */ }
+    }
+  }
+
+  const outBytes = await pdfDoc.save();
+  if (useStorage) {
+    const signedKeyPath = storageService.signedKey(doc._id.toString());
+    await storageService.upload(signedKeyPath, Buffer.from(outBytes));
+    console.log("[pdfSign] Saved final combined signed PDF to storage:", signedKeyPath);
+    return signedKeyPath;
+  }
+  const outFilename = `signed-${doc._id.toString()}-${Date.now()}.pdf`;
+  const outPath = path.join(uploadDir, outFilename);
+  await fs.writeFile(outPath, outBytes);
+  console.log("[pdfSign] Saved final combined signed PDF to local:", outFilename);
   return outFilename;
 }
 
@@ -559,6 +774,7 @@ async function applyVoidWatermark(doc) {
 
 module.exports = {
   embedSignatureInPdf,
+  embedAllSignaturesInPdf,
   getSignatureImageBuffer,
   applyVoidWatermark,
 };

@@ -1,4 +1,6 @@
 const express = require('express');
+const path = require('path');
+const fs = require('fs').promises;
 const SignRequest = require('../models/SignRequest');
 const Document = require('../models/Document');
 const User = require('../models/User');
@@ -6,6 +8,7 @@ const { saveSignatureOnly, saveFieldValue, completeSigning, approveSigning, decl
 const AuditLog = require('../models/AuditLog');
 const { logEvent } = require('../services/audit.service');
 const storageService = require('../services/storage.service');
+const { uploadDir } = require('../config/env');
 const { sendDocumentViewedNotificationToSender } = require('../services/email.service');
 
 const router = express.Router();
@@ -55,6 +58,43 @@ router.get('/:token/file-url', async (req, res) => {
       return res.status(404).json({ error: 'Document file not found' });
     }
     res.json({ url });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Public: download the PDF as an attachment (forces save-to-file on all browsers including iOS Safari)
+router.get('/:token/download', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const signReq = await SignRequest.findOne({ signLinkToken: token }).lean();
+    if (!signReq) return res.status(404).json({ error: 'Sign request not found' });
+    if (isSignLinkExpired(signReq)) return res.status(410).json({ error: 'This link has expired', code: 'LINK_EXPIRED' });
+    const doc = await Document.findById(signReq.documentId).lean();
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+
+    const safeTitle = (doc.title || 'document').replace(/[^a-z0-9 _\-\.]/gi, '_').replace(/\.pdf$/i, '');
+    const filename = `${safeTitle}.pdf`;
+
+    if (storageService.isStorageConfigured()) {
+      const key = doc.signedKey || doc.originalKey;
+      if (!key) return res.status(404).json({ error: 'Document file not found' });
+      const buffer = await storageService.download(key);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Content-Length', buffer.length);
+      return res.send(buffer);
+    }
+
+    const filePath = doc.signedFilePath || doc.originalFilePath;
+    if (!filePath) return res.status(404).json({ error: 'Document file not found' });
+    const fullPath = path.join(uploadDir, filePath);
+    const buffer = await fs.readFile(fullPath);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', buffer.length);
+    return res.send(buffer);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
