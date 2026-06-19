@@ -603,7 +603,7 @@ async function embedSignatureInPdf(doc, signRequest) {
  * @param {Array}  allSignRequests - Array of all SignRequest objects for this document
  * @returns {Promise<string>} Storage key or local filename (same contract as embedSignatureInPdf)
  */
-async function embedAllSignaturesInPdf(doc, allSignRequests) {
+async function renderAllSignaturesToBuffer(doc, allSignRequests) {
   const useStorage = doc.originalKey && storageService.isStorageConfigured();
 
   // Always start from the ORIGINAL document so no incremental chain is needed
@@ -802,15 +802,28 @@ async function embedAllSignaturesInPdf(doc, allSignRequests) {
   }
 
   const outBytes = await pdfDoc.save();
+  return Buffer.from(outBytes);
+}
+
+/**
+ * Generate the final completed PDF (all signers' signatures + field values/defaults burned in)
+ * and persist it to signedKey/signedFilePath. Thin wrapper over renderAllSignaturesToBuffer.
+ * @param {Object} doc - Document mongoose document
+ * @param {Array}  allSignRequests - Array of all SignRequest objects for this document
+ * @returns {Promise<string>} Storage key or local filename (same contract as embedSignatureInPdf)
+ */
+async function embedAllSignaturesInPdf(doc, allSignRequests) {
+  const useStorage = doc.originalKey && storageService.isStorageConfigured();
+  const outBuffer = await renderAllSignaturesToBuffer(doc, allSignRequests);
   if (useStorage) {
     const signedKeyPath = storageService.signedKey(doc._id.toString());
-    await storageService.upload(signedKeyPath, Buffer.from(outBytes));
+    await storageService.upload(signedKeyPath, outBuffer);
     console.log("[pdfSign] Saved final combined signed PDF to storage:", signedKeyPath);
     return signedKeyPath;
   }
   const outFilename = `signed-${doc._id.toString()}-${Date.now()}.pdf`;
   const outPath = path.join(uploadDir, outFilename);
-  await fs.writeFile(outPath, outBytes);
+  await fs.writeFile(outPath, outBuffer);
   console.log("[pdfSign] Saved final combined signed PDF to local:", outFilename);
   return outFilename;
 }
@@ -884,6 +897,7 @@ async function applyVoidWatermark(doc) {
 module.exports = {
   embedSignatureInPdf,
   embedAllSignaturesInPdf,
+  renderAllSignaturesToBuffer,
   getSignatureImageBuffer,
   applyVoidWatermark,
 };

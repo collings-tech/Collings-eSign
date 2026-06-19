@@ -12,7 +12,7 @@ const { createSignRequest } = require('../services/signing.service');
 const { sendDocuSignStyleSignEmail, sendDocumentUpdatedEmail } = require('../services/email.service');
 const { logEvent } = require('../services/audit.service');
 const storageService = require('../services/storage.service');
-const { applyVoidWatermark } = require('../services/pdfSign.service');
+const { applyVoidWatermark, renderAllSignaturesToBuffer } = require('../services/pdfSign.service');
 
 const router = express.Router();
 
@@ -542,24 +542,44 @@ router.get('/:id/download', requireAuth, async (req, res) => {
     const safeTitle = (doc.title || 'document').replace(/[^a-z0-9 _\-\.]/gi, '_').replace(/\.pdf$/i, '');
     const filename = `${safeTitle}.pdf`;
 
-    if (storageService.isStorageConfigured()) {
-      const key = doc.signedKey || doc.originalKey;
-      if (!key) return res.status(404).json({ error: 'Document file not found' });
-      const buffer = await storageService.download(key);
+    const sendPdf = (buffer) => {
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.setHeader('Content-Length', buffer.length);
       return res.send(buffer);
+    };
+
+    // A signed/voided artifact (signedKey / signedFilePath) is canonical — it already has every
+    // signer's signature and field values baked in, so serve it as-is. Otherwise the document is
+    // still a draft/pending and the placed fields (text boxes, default values, etc.) only live on
+    // the sign requests; render them onto the original PDF so the download reflects those edits.
+    const hasSignedArtifact = !!(doc.signedKey || doc.signedFilePath);
+    if (!hasSignedArtifact) {
+      const allSignReqs = await SignRequest.find({ documentId: doc._id }).lean();
+      const hasFields = allSignReqs.some((sr) => Array.isArray(sr.signatureFields) && sr.signatureFields.length > 0);
+      if (hasFields) {
+        try {
+          const buffer = await renderAllSignaturesToBuffer(doc, allSignReqs);
+          return sendPdf(buffer);
+        } catch (genErr) {
+          console.error('[documents] download field render failed, falling back to original:', genErr);
+          // fall through to serving the original PDF
+        }
+      }
+    }
+
+    if (storageService.isStorageConfigured()) {
+      const key = doc.signedKey || doc.originalKey;
+      if (!key) return res.status(404).json({ error: 'Document file not found' });
+      const buffer = await storageService.download(key);
+      return sendPdf(buffer);
     }
 
     const filePath = doc.signedFilePath || doc.originalFilePath;
     if (!filePath) return res.status(404).json({ error: 'Document file not found' });
     const fullPath = path.join(uploadDir, filePath);
     const buffer = await fs.readFile(fullPath);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', buffer.length);
-    return res.send(buffer);
+    return sendPdf(buffer);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });

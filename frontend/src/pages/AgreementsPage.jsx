@@ -228,7 +228,7 @@ export default function AgreementsPage() {
         responseType: "blob",
       });
       const safeTitle = (doc.title || "document")
-        .replace(/[^a-z0-9 _\-\.]/gi, "_")
+        .replace(/[^a-z0-9 _.-]/gi, "_")
         .replace(/\.pdf$/i, "");
       const url = window.URL.createObjectURL(res.data);
       const a = document.createElement("a");

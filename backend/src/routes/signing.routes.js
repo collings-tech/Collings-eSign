@@ -8,6 +8,7 @@ const { saveSignatureOnly, saveFieldValue, completeSigning, approveSigning, decl
 const AuditLog = require('../models/AuditLog');
 const { logEvent } = require('../services/audit.service');
 const storageService = require('../services/storage.service');
+const { renderAllSignaturesToBuffer } = require('../services/pdfSign.service');
 const { uploadDir } = require('../config/env');
 const { sendDocumentViewedNotificationToSender } = require('../services/email.service');
 
@@ -77,24 +78,43 @@ router.get('/:token/download', async (req, res) => {
     const safeTitle = (doc.title || 'document').replace(/[^a-z0-9 _\-\.]/gi, '_').replace(/\.pdf$/i, '');
     const filename = `${safeTitle}.pdf`;
 
-    if (storageService.isStorageConfigured()) {
-      const key = doc.signedKey || doc.originalKey;
-      if (!key) return res.status(404).json({ error: 'Document file not found' });
-      const buffer = await storageService.download(key);
+    const sendPdf = (buffer) => {
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
       res.setHeader('Content-Length', buffer.length);
       return res.send(buffer);
+    };
+
+    // No signed/voided artifact yet → still a draft/pending. The placed fields (text boxes,
+    // default values, etc.) only live on the sign requests, so render them onto the original
+    // so the download reflects those edits instead of the blank original.
+    const hasSignedArtifact = !!(doc.signedKey || doc.signedFilePath);
+    if (!hasSignedArtifact) {
+      const allSignReqs = await SignRequest.find({ documentId: doc._id }).lean();
+      const hasFields = allSignReqs.some((sr) => Array.isArray(sr.signatureFields) && sr.signatureFields.length > 0);
+      if (hasFields) {
+        try {
+          const buffer = await renderAllSignaturesToBuffer(doc, allSignReqs);
+          return sendPdf(buffer);
+        } catch (genErr) {
+          console.error('[signing] download field render failed, falling back to original:', genErr);
+          // fall through to serving the original PDF
+        }
+      }
+    }
+
+    if (storageService.isStorageConfigured()) {
+      const key = doc.signedKey || doc.originalKey;
+      if (!key) return res.status(404).json({ error: 'Document file not found' });
+      const buffer = await storageService.download(key);
+      return sendPdf(buffer);
     }
 
     const filePath = doc.signedFilePath || doc.originalFilePath;
     if (!filePath) return res.status(404).json({ error: 'Document file not found' });
     const fullPath = path.join(uploadDir, filePath);
     const buffer = await fs.readFile(fullPath);
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.setHeader('Content-Length', buffer.length);
-    return res.send(buffer);
+    return sendPdf(buffer);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
