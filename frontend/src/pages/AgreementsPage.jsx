@@ -222,28 +222,35 @@ export default function AgreementsPage() {
   };
 
   const handleDownload = async (doc) => {
+    // Open the tab synchronously inside the click gesture so it isn't popup-blocked.
+    // The PDF is generated server-side (can take a moment) so show a loading message meanwhile.
+    const tab = window.open("", "_blank");
+    if (tab) {
+      tab.document.write(
+        "<!doctype html><title>Loading preview…</title><body style='margin:0;display:flex;align-items:center;justify-content:center;height:100vh;font-family:system-ui,sans-serif;color:#555'>Preparing PDF preview…</body>"
+      );
+    }
     try {
       // Fetch with the auth header (plain navigation drops it -> 401 Unauthorized)
       const res = await apiClient.get(`/documents/${doc._id}/download`, {
         responseType: "blob",
       });
-      const safeTitle = (doc.title || "document")
-        .replace(/[^a-z0-9 _.-]/gi, "_")
-        .replace(/\.pdf$/i, "");
-      const url = window.URL.createObjectURL(res.data);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${safeTitle}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
+      const blob = new Blob([res.data], { type: "application/pdf" });
+      const url = window.URL.createObjectURL(blob);
+      if (tab) {
+        tab.location.href = url; // Chrome/Edge render the PDF inline in the new tab
+      } else {
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+      // Revoke after the tab has had time to load the blob.
+      setTimeout(() => window.URL.revokeObjectURL(url), 60000);
     } catch (err) {
-      console.error("Download failed", err);
+      console.error("Preview failed", err);
+      if (tab) tab.close();
       alert(
         err.response?.status === 401
-          ? "Please log in again and retry the download."
-          : "Download failed. Please try again."
+          ? "Please log in again and retry."
+          : "Could not open the PDF. Please try again."
       );
     }
   };
