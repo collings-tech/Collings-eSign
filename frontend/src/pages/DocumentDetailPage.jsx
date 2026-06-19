@@ -15,8 +15,6 @@ import DatePicker from "../components/DatePicker.jsx";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
-
 /**
  * Web font stack matching the standard font the PDF embeds (see pdfSign getTextFont): Lucida
  * Console/Courier → Courier, Times/Georgia → Times, else Helvetica. Using the metric-equivalent web
@@ -1040,10 +1038,33 @@ function DocumentDetailPage() {
     }
   };
 
-  const handleDownloadDoc = useCallback(() => {
+  const handleDownloadDoc = useCallback(async () => {
     if (!doc?._id) return;
-    window.location.href = `${API_BASE}/documents/${doc._id}/download`;
-  }, [doc?._id]);
+    try {
+      // Fetch with the auth header (plain navigation drops it -> 401 Unauthorized)
+      const res = await apiClient.get(`/documents/${doc._id}/download`, {
+        responseType: "blob",
+      });
+      const safeTitle = (doc.title || "document")
+        .replace(/[^a-z0-9 _\-\.]/gi, "_")
+        .replace(/\.pdf$/i, "");
+      const url = window.URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${safeTitle}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Download failed", err);
+      alert(
+        err.response?.status === 401
+          ? "Please log in again and retry the download."
+          : "Download failed. Please try again."
+      );
+    }
+  }, [doc?._id, doc?.title]);
 
   const confirmDeletePage = useCallback(async () => {
     if (pageToDelete == null) return;

@@ -4,8 +4,6 @@ import { apiClient } from "../api/client";
 import TopNavLayout from "../components/TopNavLayout.jsx";
 import { useAuth } from "../auth/AuthContext.jsx";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
-
 function formatDateTime(value) {
   if (!value) return "";
   try {
@@ -223,8 +221,31 @@ export default function AgreementsPage() {
     if (token) navigate(`/sign/${token}`);
   };
 
-  const handleDownload = (doc) => {
-    window.location.href = `${API_BASE}/documents/${doc._id}/download`;
+  const handleDownload = async (doc) => {
+    try {
+      // Fetch with the auth header (plain navigation drops it -> 401 Unauthorized)
+      const res = await apiClient.get(`/documents/${doc._id}/download`, {
+        responseType: "blob",
+      });
+      const safeTitle = (doc.title || "document")
+        .replace(/[^a-z0-9 _\-\.]/gi, "_")
+        .replace(/\.pdf$/i, "");
+      const url = window.URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${safeTitle}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Download failed", err);
+      alert(
+        err.response?.status === 401
+          ? "Please log in again and retry the download."
+          : "Download failed. Please try again."
+      );
+    }
   };
 
   // Open a sent-but-unsigned document directly in the field editor. No email is sent;
