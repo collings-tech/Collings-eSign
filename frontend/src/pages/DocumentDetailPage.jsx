@@ -15,6 +15,8 @@ import DatePicker from "../components/DatePicker.jsx";
 
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+
 const STANDARD_FIELDS = [
   { group: "Signature Fields", items: ["Signature", "Initial", "Date Signed"] },
   { group: "Personal Information Fields", items: ["Name", "Email", "Mobile"] },
@@ -244,6 +246,9 @@ function DocumentDetailPage() {
   const [rightPanelPopupOpen, setRightPanelPopupOpen] = useState(false); // mobile: Pages/Properties as popup
   const [documentFileKey, setDocumentFileKey] = useState(0);
   const [documentFileUrl, setDocumentFileUrl] = useState(null);
+  // Edit-in-place mode for a sent-but-unsigned document (no email, no status change).
+  const [pendingEditMode, setPendingEditMode] = useState(location.state?.editPending === true);
+  const [savingPendingEdits, setSavingPendingEdits] = useState(false);
   const [editingFieldId, setEditingFieldId] = useState(null); // ID of field being edited inline
   const dragStartRef = useRef({ fieldX: 0, fieldY: 0, clientX: 0, clientY: 0 });
   const resizeStartRef = useRef({ x: 0, y: 0, w: 0, h: 0, clientX: 0, clientY: 0 });
@@ -840,7 +845,10 @@ function DocumentDetailPage() {
   };
 
   const handleBack = async () => {
-    if (isTemplateFlow) {
+    if (pendingEditMode) {
+      // Leaving the in-place editor for a sent document — discard the editor and show the detail view.
+      setPendingEditMode(false);
+    } else if (isTemplateFlow) {
       navigate("/templates");
     } else if (doc?.status === "draft") {
       // Save placed fields before going back so they're preserved when returning
@@ -856,6 +864,11 @@ function DocumentDetailPage() {
       navigate("/agreements");
     }
   };
+
+  const handleDownloadDoc = useCallback(() => {
+    if (!doc?._id) return;
+    window.location.href = `${API_BASE}/documents/${doc._id}/download`;
+  }, [doc?._id]);
 
   const confirmDeletePage = useCallback(async () => {
     if (pageToDelete == null) return;
@@ -943,6 +956,22 @@ function DocumentDetailPage() {
       setError(err.response?.data?.error || "Failed to save fields");
     } finally {
       setSavingFields(false);
+    }
+  }, [id, placedFields, mapFieldToPayload]);
+
+  const handleSavePendingEdits = useCallback(async () => {
+    setSavingPendingEdits(true);
+    setError("");
+    try {
+      await apiClient.put(`/documents/${id}/signing-fields`, {
+        fields: placedFields.map(mapFieldToPayload),
+      });
+      setPendingEditMode(false);
+    } catch (err) {
+      console.error(err);
+      setError(err.response?.data?.error || "Failed to save changes");
+    } finally {
+      setSavingPendingEdits(false);
     }
   }, [id, placedFields, mapFieldToPayload]);
 
@@ -1076,6 +1105,10 @@ function DocumentDetailPage() {
     ? new Date(new Date(doc.sentAt).getTime() + 90 * 24 * 60 * 60 * 1000)
     : null;
   const allSigned = doc.status === "completed" || signers.every((s) => s.status === "signed");
+  const anySigned = signers.some((s) => s.status === "signed");
+  const isOwnerUser = user?.id && doc.ownerId && String(doc.ownerId) === String(user.id);
+  const canReopen = isOwnerUser && doc.status === "pending" && !anySigned;
+  const isPendingEdit = pendingEditMode && canReopen;
 
   const selectedField = placedFields.find((f) => f.id === selectedFieldId);
   const scale = zoom / 100;
@@ -1090,7 +1123,8 @@ function DocumentDetailPage() {
 
   // Sent agreement view (not draft) — Collings eSign-style detail with Recipients / Details tabs.
   // Only show prepare (assign fields + Send) when doc is draft; otherwise show agreement detail so we never try to save fields on a non-draft doc.
-  if (!isDraft) {
+  // Exception: an owner editing a sent-but-unsigned document in place (isPendingEdit) also gets the prepare editor.
+  if (!isDraft && !isPendingEdit) {
     const documentDisplayUrl = documentFileUrl;
     const copyEnvelopeId = () => {
       navigator.clipboard?.writeText(doc._id).then(() => {});
@@ -1140,6 +1174,22 @@ function DocumentDetailPage() {
                   Sign
                 </button>
               )}
+              {canReopen && (
+                <button
+                  type="button"
+                  className="agreement-detail-btn secondary"
+                  onClick={() => setPendingEditMode(true)}
+                >
+                  Edit
+                </button>
+              )}
+              <button
+                type="button"
+                className="agreement-detail-btn secondary"
+                onClick={handleDownloadDoc}
+              >
+                Download
+              </button>
               <button type="button" className="agreement-detail-more-btn" aria-label="More actions">⋯</button>
             </div>
           </div>
@@ -1359,7 +1409,7 @@ function DocumentDetailPage() {
             {/* <button type="button" className="prepare-icon-btn" aria-label="Fit to page">⊡</button> */}
           </div>
           <div className="prepare-header-right">
-            {selectedFieldId && doc?.status === "draft" && (
+            {selectedFieldId && (isDraft || isPendingEdit) && (
               <button
                 type="button"
                 className="prepare-header-delete-btn"
@@ -2778,7 +2828,21 @@ function DocumentDetailPage() {
           <button type="button" className="prepare-btn secondary" onClick={handleBack}>
             Back
           </button>
-          {doc?.isTemplate ? (
+          {isPendingEdit ? (
+            <span className="prepare-footer-save-wrap">
+              <span className="prepare-footer-save-hint" role="status">
+                Editing a sent document — recipients are not re-notified.
+              </span>
+              <button
+                type="button"
+                className="prepare-btn primary"
+                onClick={handleSavePendingEdits}
+                disabled={savingPendingEdits}
+              >
+                {savingPendingEdits ? "Saving…" : "Save changes"}
+              </button>
+            </span>
+          ) : doc?.isTemplate ? (
             <span className="prepare-footer-save-wrap">
               {signersWithoutPlace().length > 0 && (
                 <span className="prepare-footer-save-hint" role="status">

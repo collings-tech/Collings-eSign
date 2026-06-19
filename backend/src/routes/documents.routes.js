@@ -16,6 +16,24 @@ const { applyVoidWatermark } = require('../services/pdfSign.service');
 
 const router = express.Router();
 
+// A document can be edited (fields/pages) while it is a draft, or while it has been
+// sent (pending) as long as no recipient has signed yet. Once at least one recipient
+// has signed, it is locked and can no longer be edited.
+async function assertDocEditable(doc) {
+  if (doc.status === 'draft') return { ok: true };
+  if (doc.status !== 'pending') {
+    return { ok: false, status: 400, error: 'This document can no longer be edited.' };
+  }
+  const signedCount = await SignRequest.countDocuments({
+    documentId: doc._id,
+    $or: [{ status: 'signed' }, { signedAt: { $ne: null } }, { approvedAt: { $ne: null } }],
+  });
+  if (signedCount > 0) {
+    return { ok: false, status: 409, error: 'This document can no longer be edited because a recipient has already signed it.' };
+  }
+  return { ok: true };
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
@@ -589,8 +607,10 @@ router.put('/:id/signing-fields', requireAuth, async (req, res) => {
     if (!doc) {
       return res.status(404).json({ error: 'Document not found' });
     }
-    if (doc.status !== 'draft') {
-      return res.status(400).json({ error: 'Can only edit fields on draft documents' });
+    // Editable while draft, or while sent (pending) as long as nobody has signed yet.
+    const editGuard = await assertDocEditable(doc);
+    if (!editGuard.ok) {
+      return res.status(editGuard.status).json({ error: editGuard.error });
     }
     const { fields = [], page1RenderWidth, page1RenderHeight } = req.body;
     if (page1RenderWidth != null && Number(page1RenderWidth) > 0) {
@@ -977,6 +997,17 @@ router.put('/:id', requireAuth, async (req, res) => {
     if (status != null) update.status = status;
     if (typeof isTemplate === 'boolean') update.isTemplate = isTemplate;
 
+    // Guard: never allow reverting a document to draft once a recipient has signed.
+    if (update.status === 'draft') {
+      const signedCount = await SignRequest.countDocuments({
+        documentId: req.params.id,
+        $or: [{ status: 'signed' }, { signedAt: { $ne: null } }, { approvedAt: { $ne: null } }],
+      });
+      if (signedCount > 0) {
+        return res.status(409).json({ error: 'This document can no longer be edited because a recipient has already signed it.' });
+      }
+    }
+
     const doc = await Document.findOneAndUpdate(
       { _id: req.params.id, ownerId: req.user.id },
       { $set: update },
@@ -999,8 +1030,9 @@ router.delete('/:id/pages/:pageIndex', requireAuth, async (req, res) => {
     if (!doc) {
       return res.status(404).json({ error: 'Document not found' });
     }
-    if (doc.status !== 'draft') {
-      return res.status(400).json({ error: 'Can only edit pages in draft documents' });
+    const editGuard = await assertDocEditable(doc);
+    if (!editGuard.ok) {
+      return res.status(editGuard.status).json({ error: editGuard.error });
     }
     const pageIndex = parseInt(req.params.pageIndex, 10);
     if (!Number.isInteger(pageIndex) || pageIndex < 1) {

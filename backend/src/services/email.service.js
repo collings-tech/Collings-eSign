@@ -1,6 +1,21 @@
 const nodemailer = require('nodemailer');
 const { clientOrigin } = require('../config/env');
 
+// Brand shown as the email sender name. Override with EMAIL_BRAND_NAME if needed.
+const BRAND_NAME = process.env.EMAIL_BRAND_NAME || 'Collings eSign';
+
+/**
+ * Build a nodemailer "from" so the recipient's inbox shows the brand and who sent it,
+ * e.g. "Collings eSign on behalf of Wally Gaynor". The email address is kept separate
+ * (provider/sender mailbox) so deliverability is unaffected.
+ */
+function brandedFrom(address, senderName) {
+  const name = senderName && senderName.trim()
+    ? `${BRAND_NAME} (${senderName.trim()})`
+    : BRAND_NAME;
+  return { name, address };
+}
+
 const LOGO_URL = process.env.LOGO_URL || 'http://www.collings.com.au/wp-content/uploads/2023/05/logo_collings.png';
 const PEN_ICON_URL = process.env.PEN_ICON_URL || 'http://www.collings.com.au/wp-content/uploads/2026/02/contract-2.png';
 const PASSWORD_ICON_URL = process.env.PASSWORD_ICON_URL || 'http://www.collings.com.au/wp-content/uploads/2026/02/password.png';
@@ -82,7 +97,8 @@ async function sendSignRequestEmail({ signerEmail, signerName, token, documentTi
 
   const mailOptions = {
     to: signerEmail,
-    from: ownerEmail || process.env.EMAIL_FROM || process.env.SMTP_USER,
+    from: brandedFrom(ownerEmail || process.env.EMAIL_FROM || process.env.SMTP_USER, ''),
+    replyTo: ownerEmail || undefined,
     subject: `Signature requested: ${documentTitle}`,
     text: `Hi ${signerName || ''},
 
@@ -139,10 +155,11 @@ async function sendDocuSignStyleSignEmail({
     documentTitle: documentTitle.endsWith('.pdf') ? documentTitle : `${documentTitle}.pdf`,
   });
 
-  const from = resolvedSenderEmail;
+  const from = brandedFrom(resolvedSenderEmail, senderName);
   const mailOptions = {
     to: signerEmail,
     from,
+    replyTo: resolvedSenderEmail || undefined,
     subject,
     text: `${senderName || 'Someone'} sent you a document to review and sign.\n\nDocument: ${documentTitle}\n\nReview and sign: ${signUrl}\n\nYou will need to log in or create an account to sign the document.\n\nThank You,\n${senderName || 'Someone'}`,
     html,
@@ -196,7 +213,7 @@ async function sendProfileOtpEmail({ to, otp }) {
   const html = buildProfileOtpHtml(otp);
   const mailOptions = {
     to,
-    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    from: brandedFrom(process.env.EMAIL_FROM || process.env.SMTP_USER, ''),
     subject,
     text: `Your verification code is ${otp}. Use it to update your profile. It expires in 10 minutes.`,
     html,
@@ -246,7 +263,7 @@ async function sendSignupOtpEmail({ to, otp }) {
   const html = buildSignupOtpHtml(otp);
   const mailOptions = {
     to,
-    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    from: brandedFrom(process.env.EMAIL_FROM || process.env.SMTP_USER, ''),
     subject,
     text: `Your verification code is ${otp}. Use it to verify your email and complete signup. It expires in 10 minutes.`,
     html,
@@ -296,7 +313,7 @@ async function sendForgotPasswordOtpEmail({ to, otp }) {
   const html = buildForgotPasswordOtpHtml(otp);
   const mailOptions = {
     to,
-    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    from: brandedFrom(process.env.EMAIL_FROM || process.env.SMTP_USER, ''),
     subject,
     text: `Your verification code to reset your password is ${otp}. Use it in the app. It expires in 10 minutes.`,
     html,
@@ -333,7 +350,7 @@ async function sendSignupRequestNotificationEmail({ to, requesterEmail }) {
 </body></html>`;
   await t.sendMail({
     to,
-    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    from: brandedFrom(process.env.EMAIL_FROM || process.env.SMTP_USER, ''),
     subject,
     text,
     html,
@@ -371,7 +388,7 @@ async function sendSignupApprovedEmail({ to, temporaryPassword }) {
 </body></html>`;
   await t.sendMail({
     to,
-    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    from: brandedFrom(process.env.EMAIL_FROM || process.env.SMTP_USER, ''),
     subject,
     text,
     html,
@@ -424,7 +441,7 @@ async function sendSignedWaitingForOthersEmail({ to, recipientName, documentTitl
 
   const mailOptions = {
     to,
-    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    from: brandedFrom(process.env.EMAIL_FROM || process.env.SMTP_USER, ''),
     subject,
     text: `You've successfully signed.\n\nPlease wait for the other recipients to finish. Once the envelope is complete, you'll receive an email with a link to download the document.\n\nDocument: ${documentTitle}\n\nThank You,\nCollings eSign`,
     html,
@@ -494,7 +511,7 @@ async function sendDocumentCompletedEmail({ to, recipientName, token, documentTi
 
   const mailOptions = {
     to,
-    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    from: brandedFrom(process.env.EMAIL_FROM || process.env.SMTP_USER, ''),
     subject,
     text: `Your document has been completed.\n\nDocument: ${documentTitle}\n\nView completed document: ${viewCompletedUrl}\n\nThank You,\nCollings eSign`,
     html,
@@ -557,7 +574,7 @@ async function sendSignedDocumentToSender({ to, senderName, documentTitle, pdfBu
 
   const mailOptions = {
     to,
-    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    from: brandedFrom(process.env.EMAIL_FROM || process.env.SMTP_USER, ''),
     subject,
     text: `Your document has been signed by all recipients.\n\nThe signed document "${documentTitle}" is attached to this email.\n\nThank You,\nCollings eSign`,
     html,
@@ -624,7 +641,7 @@ async function sendDocumentViewedNotificationToSender({ to, senderName, document
 
   const mailOptions = {
     to,
-    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    from: brandedFrom(process.env.EMAIL_FROM || process.env.SMTP_USER, ''),
     subject,
     text: `The recipient has viewed your document.\n\n${recipientName || 'Recipient'} opened and viewed "${documentTitle}".\n\nThank You,\nCollings eSign`,
     html,
@@ -687,7 +704,7 @@ async function sendSignedDocumentToRecipient({ to, recipientName, documentTitle,
 
   const mailOptions = {
     to,
-    from: process.env.EMAIL_FROM || process.env.SMTP_USER,
+    from: brandedFrom(process.env.EMAIL_FROM || process.env.SMTP_USER, ''),
     subject,
     text: `All parties have signed "${documentTitle}".\n\nA copy of the fully signed document is attached to this email for your records.\n\nThank You,\nCollings eSign`,
     html,

@@ -213,6 +213,13 @@ export default function AgreementsPage() {
     window.location.href = `${API_BASE}/documents/${doc._id}/download`;
   };
 
+  // Open a sent-but-unsigned document directly in the field editor. No email is sent;
+  // the owner edits fields/pages in place and the existing signing links stay valid.
+  const handleEditDocument = (doc) => {
+    setMenuOpenId(null);
+    navigate(`/documents/${doc._id}`, { state: { editPending: true } });
+  };
+
   const handleTrash = async (doc) => {
     setActionLoading(doc._id);
     setMenuOpenId(null);
@@ -437,6 +444,8 @@ export default function AgreementsPage() {
                 const isPending = agreement.status === "pending";
                 const isCompleted = agreement.status === "completed";
                 const isVoided = agreement.status === "voided";
+                const anySigned = (agreement.signRequests || []).some((sr) => sr.status === "signed");
+                const canReopen = isPending && isOwner(agreement) && !anySigned;
                 const canOpen = agreement.status !== "deleted" && (isOwner(agreement) || needToSign);
                 const loadingThis = actionLoading === agreement._id;
                 const menuOpen = menuOpenId === agreement._id;
@@ -478,6 +487,16 @@ export default function AgreementsPage() {
                               Sign
                             </button>
                           )}
+                          {canReopen && !needToSign && (
+                            <button
+                              type="button"
+                              className="agreements-action agreements-action-secondary"
+                              onClick={() => handleEditDocument(agreement)}
+                              disabled={loadingThis}
+                            >
+                              Edit
+                            </button>
+                          )}
                           {isPending && isOwner(agreement) && !needToSign && (
                             <button
                               type="button"
@@ -488,7 +507,7 @@ export default function AgreementsPage() {
                               Resend
                             </button>
                           )}
-                          {(isCompleted || isVoided) && (
+                          {(isPending || isCompleted || isVoided) && (
                             <button
                               type="button"
                               className="agreements-action agreements-action-secondary"

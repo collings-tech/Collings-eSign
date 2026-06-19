@@ -479,8 +479,8 @@ export default function SigningPage() {
 
   /** Build inline style for text/data input fields from the field's formatting tool settings. */
   const getTextFieldFormatStyle = (f) => {
-    const baseSize = Math.max(6, Math.min(24, Number(f.fontSize) || 14));
-    const fontSize = Math.max(8, Math.round(baseSize * fontScale));
+    const baseSize = Math.max(11, Math.min(24, Number(f.fontSize) || 14));
+    const fontSize = Math.max(11, Math.round(baseSize * fontScale));
     const fontFamily = (f.fontFamily && f.fontFamily.trim()) ? f.fontFamily.trim() : "Lucida Console";
     const color = FONT_COLOR_MAP[f.fontColor] ?? (f.fontColor && /^#|[a-z]/.test(f.fontColor) ? f.fontColor : "#000000");
     return {

@@ -1278,7 +1278,7 @@ body.top-sidebar-open .top-sidebar {
 .agreements-table-head,
 .agreements-row {
   display: grid;
-  grid-template-columns: 44px minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) 200px;
+  grid-template-columns: 44px minmax(0, 1.8fr) minmax(0, 1fr) minmax(110px, 0.9fr) minmax(290px, auto);
   gap: 1rem;
   align-items: center;
 }
@@ -1320,9 +1320,9 @@ body.top-sidebar-open .top-sidebar {
   border-radius: var(--radius);
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-sm);
-  padding: 0.5rem 1rem;
-  width: 7.5rem;
-  min-width: 7.5rem;
+  padding: 0.5rem 0.85rem;
+  width: auto;
+  min-width: 5.25rem;
   font-size: 0.875rem;
   font-weight: 500;
   background: var(--color-bg-card);
@@ -1353,6 +1353,8 @@ body.top-sidebar-open .top-sidebar {
 .agreements-actions-group {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 0.375rem;
   flex-shrink: 0;
 }
@@ -2587,7 +2589,10 @@ body.top-sidebar-open .top-sidebar {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: #000000;
+  color: #111827;
+  font-weight: 600;
+  /* White halo keeps the label legible over any recipient color background */
+  text-shadow: 0 0 2px rgba(255, 255, 255, 0.95), 0 0 2px rgba(255, 255, 255, 0.95);
   min-width: 0;
 }
 
@@ -3964,7 +3969,7 @@ body.top-sidebar-open .top-sidebar {
 
 .agreement-detail-recipient-email {
   font-size: 0.8125rem;
-  color: var(--color-text-muted);
+  color: var(--color-text-secondary);
 }
 
 .agreement-detail-recipient-status {
@@ -4006,8 +4011,8 @@ body.top-sidebar-open .top-sidebar {
 
 .agreement-detail-detail-row dt {
   margin: 0;
-  font-weight: 500;
-  color: var(--color-text-muted);
+  font-weight: 600;
+  color: var(--color-text-secondary);
 }
 
 .agreement-detail-detail-row dd {

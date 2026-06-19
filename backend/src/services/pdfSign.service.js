@@ -448,7 +448,7 @@ async function embedSignatureInPdf(doc, signRequest) {
     }
 
     const text = String(value).trim();
-    let fontSizePt = f.fontSize != null && f.fontSize > 0 ? Math.min(72, Math.max(6, Number(f.fontSize))) : Math.min(12, Math.max(8, innerH * 0.7));
+    let fontSizePt = f.fontSize != null && f.fontSize > 0 ? Math.min(72, Math.max(6, Number(f.fontSize))) : Math.min(14, Math.max(10, innerH * 0.7));
     if (!Number.isFinite(fontSizePt) || fontSizePt <= 0) fontSizePt = 10;
     const textColor = getTextColor(f.fontColor);
     const textX = innerX + 1;
@@ -677,7 +677,7 @@ async function embedAllSignaturesInPdf(doc, allSignRequests) {
       }
 
       const text = String(value).trim();
-      let fontSizePt = f.fontSize != null && f.fontSize > 0 ? Math.min(72, Math.max(6, Number(f.fontSize))) : Math.min(12, Math.max(8, innerH * 0.7));
+      let fontSizePt = f.fontSize != null && f.fontSize > 0 ? Math.min(72, Math.max(6, Number(f.fontSize))) : Math.min(14, Math.max(10, innerH * 0.7));
       if (!Number.isFinite(fontSizePt) || fontSizePt <= 0) fontSizePt = 10;
       try {
         const textFont = await getTextFont(pdfDoc, f);
