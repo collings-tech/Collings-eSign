@@ -47,11 +47,14 @@ function getTransporter() {
   return transporter;
 }
 
-function buildDocuSignStyleHtml({ signUrl, senderName, senderEmail, signerName, documentTitle }) {
+function buildDocuSignStyleHtml({ signUrl, senderName, senderEmail, signerName, documentTitle, headlineHtml, ctaLabel, completeLine }) {
   const displayTitle = documentTitle.endsWith('.pdf') ? documentTitle : `${documentTitle}.pdf`;
   const safeSenderName = (senderName || 'Someone').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const safeSignerName = (signerName || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const safeDocTitle = displayTitle.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const headline = headlineHtml || `<strong>${safeSenderName}</strong> sent you a document to review and sign.`;
+  const cta = ctaLabel || 'Review Document';
+  const complete = completeLine || `Complete with Collings eSign: <strong>${safeDocTitle}</strong>`;
 
   return `
 <!DOCTYPE html>
@@ -69,17 +72,17 @@ function buildDocuSignStyleHtml({ signUrl, senderName, senderEmail, signerName, 
           <tr><td align="center" valign="middle"><img src="${PEN_ICON_URL}" alt="" style="width:28px; height:28px; display:block; margin:0 auto;" /></td></tr>
         </table>
         <p style="margin:0 0 24px; color:#000; font-size:16px; line-height:1.5;">
-          <strong>${safeSenderName}</strong> sent you a document to review and sign.
+          ${headline}
         </p>
         <a href="${signUrl}" style="display:inline-block; padding:12px 28px; background:#000; color:#fff; text-decoration:none; font-weight:600; font-size:15px; border-radius:8px;">
-          Review Document
+          ${cta}
         </a>
       </div>
     </div>
     <div style="padding:8px 24px 24px; color:#57595c; font-size:14px; line-height:1.6;">
       <p style="margin:0 0 8px;"><strong>${safeSenderName}</strong><br/><a href="mailto:${senderEmail}" style="color:#55c5d0;">${senderEmail}</a></p>
       <p style="margin:16px 0 8px;">${safeSignerName},</p>
-      <p style="margin:0 0 16px;">Complete with Collings eSign: <strong>${safeDocTitle}</strong></p>
+      <p style="margin:0 0 16px;">${complete}</p>
       <p style="margin:24px 0 0;">Thank You,<br/>${safeSenderName}</p>
     </div>
   </div>
@@ -169,6 +172,54 @@ async function sendDocuSignStyleSignEmail({
   const result = await t.sendMail(mailOptions);
   console.log("result", result);
   console.log('[email] Sent successfully to:', signerEmail, 'messageId:', result.messageId);
+}
+
+/**
+ * Notify a recipient that a sent document they still need to sign has been UPDATED by the sender.
+ * Reuses the same signing link and Collings-branded layout as the original request email.
+ */
+async function sendDocumentUpdatedEmail({
+  signerEmail,
+  signerName,
+  token,
+  documentTitle,
+  senderName,
+  senderEmail,
+}) {
+  const t = getTransporter();
+  if (!t) {
+    throw new Error('Email is not configured. Set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS.');
+  }
+
+  const signUrl = `${clientOrigin.replace(/\/+$/, '')}/sign/${token}`;
+  const subject = `Updated document to review with Collings eSign: ${documentTitle}`;
+  const resolvedSenderEmail = senderEmail || process.env.EMAIL_FROM || process.env.SMTP_USER || '';
+  const safeSenderName = (senderName || 'Someone');
+
+  const html = buildDocuSignStyleHtml({
+    signUrl,
+    senderName: safeSenderName,
+    senderEmail: resolvedSenderEmail,
+    signerName,
+    documentTitle: documentTitle.endsWith('.pdf') ? documentTitle : `${documentTitle}.pdf`,
+    headlineHtml: `<strong>${safeSenderName.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</strong> updated a document and would like you to review it.`,
+    ctaLabel: 'Review Document',
+    completeLine: `Review the updated document with Collings eSign.`,
+  });
+
+  const from = brandedFrom(resolvedSenderEmail, safeSenderName);
+  const mailOptions = {
+    to: signerEmail,
+    from,
+    replyTo: resolvedSenderEmail || undefined,
+    subject,
+    text: `${safeSenderName} updated a document and would like you to review it.\n\nDocument: ${documentTitle}\n\nReview the updated document: ${signUrl}\n\nThank You,\n${safeSenderName}`,
+    html,
+  };
+
+  console.log('[email] Sending updated-document notice to:', signerEmail, 'from:', from);
+  const result = await t.sendMail(mailOptions);
+  console.log('[email] Updated-document notice sent to:', signerEmail, 'messageId:', result.messageId);
 }
 
 /** Profile OTP email – matches DocuSign-style design with password icon */
@@ -728,6 +779,7 @@ async function sendSignedDocumentToRecipient({ to, recipientName, documentTitle,
 module.exports = {
   sendSignRequestEmail,
   sendDocuSignStyleSignEmail,
+  sendDocumentUpdatedEmail,
   sendProfileOtpEmail,
   sendSignupOtpEmail,
   sendForgotPasswordOtpEmail,

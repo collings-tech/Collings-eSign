@@ -238,32 +238,58 @@ export default function TemplateViewPage() {
                     return pageFields.map((f, idx) => {
                       const color = getRecipientColor(f.signRequestId, signers);
                       const isSignatureType = f.type === "Signature" || f.type === "Initial";
+                      const isLineField = f.type === "Line";
                       const xPct = f.xPct != null ? f.xPct : 8;
                       const yPct = f.yPct != null ? f.yPct : 10;
                       const wPct = f.wPct != null ? f.wPct : 14;
                       const hPct = f.hPct != null ? f.hPct : 6;
+                      const lineHasEndpoints = isLineField && f.x1Pct != null && f.y1Pct != null && f.x2Pct != null && f.y2Pct != null;
+                      const lbw = wPct || 0.0001;
+                      const lbh = hPct || 0.0001;
                       return (
                         <div
                           key={`${f.signRequestId}-${idx}`}
-                          className={`template-view-placed-field ${isSignatureType ? "template-view-placed-field-sign" : ""}`}
+                          className={`template-view-placed-field ${isSignatureType ? "template-view-placed-field-sign" : ""} ${isLineField ? "prepare-placed-field-line" : ""}`}
                           style={{
                             position: "absolute",
                             left: `${xPct}%`,
                             top: `${yPct}%`,
                             width: `${wPct}%`,
                             height: `${hPct}%`,
-                            borderColor: color.border,
-                            backgroundColor: color.bg,
+                            borderColor: isLineField ? "transparent" : color.border,
+                            backgroundColor: isLineField ? "transparent" : color.bg,
                             pointerEvents: "none",
                           }}
                           aria-hidden
                         >
-                          <span className="prepare-placed-field-icon" aria-hidden>
-                            {FIELD_ICONS[f.type] || "•"}
-                          </span>
-                          <span className="prepare-placed-field-label">
-                            {f.type === "Signature" ? "Sign" : f.type}
-                          </span>
+                          {isLineField ? (
+                            <svg
+                              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", overflow: "visible" }}
+                              viewBox="0 0 100 100"
+                              preserveAspectRatio="none"
+                              aria-hidden
+                            >
+                              <line
+                                x1={lineHasEndpoints ? ((f.x1Pct - xPct) / lbw) * 100 : 0}
+                                y1={lineHasEndpoints ? ((f.y1Pct - yPct) / lbh) * 100 : 50}
+                                x2={lineHasEndpoints ? ((f.x2Pct - xPct) / lbw) * 100 : 100}
+                                y2={lineHasEndpoints ? ((f.y2Pct - yPct) / lbh) * 100 : 50}
+                                stroke="#111"
+                                strokeWidth={2}
+                                strokeLinecap="round"
+                                vectorEffect="non-scaling-stroke"
+                              />
+                            </svg>
+                          ) : (
+                            <>
+                              <span className="prepare-placed-field-icon" aria-hidden>
+                                {FIELD_ICONS[f.type] || "•"}
+                              </span>
+                              <span className="prepare-placed-field-label">
+                                {f.type === "Signature" ? "Sign" : f.type}
+                              </span>
+                            </>
+                          )}
                         </div>
                       );
                     });

@@ -9,7 +9,7 @@ const SignRequest = require('../models/SignRequest');
 const User = require('../models/User');
 const { uploadDir } = require('../config/env');
 const { createSignRequest } = require('../services/signing.service');
-const { sendDocuSignStyleSignEmail } = require('../services/email.service');
+const { sendDocuSignStyleSignEmail, sendDocumentUpdatedEmail } = require('../services/email.service');
 const { logEvent } = require('../services/audit.service');
 const storageService = require('../services/storage.service');
 const { applyVoidWatermark } = require('../services/pdfSign.service');
@@ -621,7 +621,7 @@ router.put('/:id/signing-fields', requireAuth, async (req, res) => {
       await doc.save();
     }
     const signReqs = await SignRequest.find({ documentId: doc._id });
-    const allowedTypes = ['signature', 'initial', 'stamp', 'date', 'name', 'email', 'company', 'title', 'text', 'number', 'checkbox', 'dropdown', 'radio', 'note', 'approve', 'decline'];
+    const allowedTypes = ['signature', 'initial', 'stamp', 'date', 'name', 'email', 'mobile', 'company', 'title', 'text', 'number', 'checkbox', 'dropdown', 'radio', 'note', 'approve', 'decline', 'line'];
     const normalizeType = (t) => {
       if (!t) return 'signature';
       const lower = String(t).toLowerCase();
@@ -682,12 +682,54 @@ router.put('/:id/signing-fields', requireAuth, async (req, res) => {
           if (f.defaultValue != null) fieldData.defaultValue = String(f.defaultValue || '').slice(0, 1000);
           if (f.groupName != null) fieldData.groupName = String(f.groupName || '').slice(0, 100);
           if (f.noteContent != null) fieldData.noteContent = String(f.noteContent || '').slice(0, 10000);
+          if (f.x1Pct != null && Number.isFinite(Number(f.x1Pct))) fieldData.x1Pct = Number(f.x1Pct);
+          if (f.y1Pct != null && Number.isFinite(Number(f.y1Pct))) fieldData.y1Pct = Number(f.y1Pct);
+          if (f.x2Pct != null && Number.isFinite(Number(f.x2Pct))) fieldData.x2Pct = Number(f.x2Pct);
+          if (f.y2Pct != null && Number.isFinite(Number(f.y2Pct))) fieldData.y2Pct = Number(f.y2Pct);
           return fieldData;
         });
       sr.signatureFields = forThisSigner;
       await sr.save();
     }
-    res.json({ success: true });
+
+    // If the document was already sent (pending), let recipients who still need to sign know it was
+    // updated, so they can review the latest version. Email failures don't fail the save.
+    let notified = 0;
+    if (doc.status === 'pending') {
+      const senderName = req.user.name || req.user.email || 'Someone';
+      const senderEmail = req.user.email || '';
+      const ownerEmail = senderEmail.toLowerCase();
+      const documentTitle = doc.title || 'Document';
+      for (const sr of signReqs) {
+        // Only notify recipients who already received the document and have not signed yet
+        // (this naturally respects signing order — later signers aren't emailed early).
+        if (!sr.emailSentAt || sr.status === 'signed') continue;
+        if ((sr.signerEmail || '').toLowerCase() === ownerEmail) continue; // skip the owner's own copy
+        try {
+          await sendDocumentUpdatedEmail({
+            signerEmail: sr.signerEmail,
+            signerName: sr.signerName,
+            token: sr.signLinkToken,
+            documentTitle,
+            senderName,
+            senderEmail,
+          });
+          notified++;
+          await logEvent({
+            documentId: doc._id.toString(),
+            signRequestId: sr._id,
+            actorType: 'sender',
+            actorIdOrEmail: senderEmail,
+            eventType: 'document_updated_notice',
+            meta: { signerEmail: sr.signerEmail, signerName: sr.signerName },
+          });
+        } catch (emailErr) {
+          console.error('[documents] update notice failed for', sr.signerEmail, emailErr);
+        }
+      }
+    }
+
+    res.json({ success: true, notified });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });

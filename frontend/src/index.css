@@ -2551,6 +2551,37 @@ body.top-sidebar-open .top-sidebar {
   pointer-events: none;
 }
 
+/* Line: a free-angle line the sender draws (Paint-style) to cross out / strike through clauses */
+.prepare-placed-field-line {
+  padding: 0;
+  min-height: 0;
+  background: transparent !important;
+  border: none !important;
+  overflow: visible;
+}
+.prepare-placed-field-line-svg {
+  display: block;
+}
+/* Endpoint handles for editing a selected line (drag each end, Paint-style) */
+.prepare-line-endpoint {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin-left: -6px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #2563eb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  cursor: grab;
+  pointer-events: auto;
+  touch-action: none;
+  z-index: 5;
+}
+.prepare-line-endpoint:active {
+  cursor: grabbing;
+}
+
 /* Radio: compact – circle + label inline */
 .prepare-placed-field-radio {
   padding: 0 0.15rem;
@@ -2562,8 +2593,11 @@ body.top-sidebar-open .top-sidebar {
 
 /* Data input fields (Text, Number, Dropdown, etc.): rectangle – shorter height */
 .prepare-placed-field-data-rect {
-  padding: 0 0.2rem;
+  /* No padding so the value/placeholder fills the box exactly (matches the signer view + PDF) */
+  padding: 0;
   min-height: 0;
+  /* Keep wrapped multi-line text contained within the field box instead of spilling past its border */
+  overflow: hidden;
 }
 
 .prepare-placed-field-note .prepare-placed-field-icon {
@@ -5065,7 +5099,8 @@ body.top-sidebar-open .top-sidebar {
   height: 100%;
   min-height: 0;
   min-width: 0;
-  padding: 0.08rem 0.55rem;
+  /* No padding so the value/placeholder fills the box exactly (matches the editor + PDF) */
+  padding: 0;
   border: none;
   border-radius: 4px;
   font: inherit;
@@ -5130,7 +5165,7 @@ body.top-sidebar-open .top-sidebar {
 .signing-field-readonly-text {
   width: 100%;
   height: 100%;
-  padding: 0.25rem 0.5rem;
+  padding: 0;
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -5292,6 +5327,14 @@ body.top-sidebar-open .top-sidebar {
   word-break: break-word;
   overflow-wrap: break-word;
   min-width: 0;
+}
+
+/* Line: sender-placed cross-out shown to the signer (static, non-interactive) */
+.signing-field-line-block {
+  background: transparent !important;
+  border: none !important;
+  pointer-events: none !important;
+  overflow: visible;
 }
 
 /* Approve / Decline (DocuSign-style) */

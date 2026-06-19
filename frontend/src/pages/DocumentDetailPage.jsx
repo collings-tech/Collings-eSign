@@ -17,10 +17,27 @@ pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.vers
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
 
+/**
+ * Web font stack matching the standard font the PDF embeds (see pdfSign getTextFont): Lucida
+ * Console/Courier → Courier, Times/Georgia → Times, else Helvetica. Using the metric-equivalent web
+ * font (Courier New / Times New Roman / Arial) makes the editor preview look like the burned PDF.
+ */
+function pdfMatchingFontStack(fontFamily) {
+  const fam = (fontFamily || "").toLowerCase();
+  if (fam.includes("times") || fam.includes("georgia")) return '"Times New Roman", Times, serif';
+  if (fam.includes("courier") || fam.includes("lucida console")) return '"Courier New", Courier, monospace';
+  return 'Arial, Helvetica, sans-serif';
+}
+
+// Field types whose font auto-fills the box height (everything that shows a single line of value
+// text — NOT the Text box, which wraps at its own chosen size).
+const AUTO_FONT_TYPES = ["Name", "Email", "Mobile", "Company", "Title", "Number", "Date Signed"];
+
 const STANDARD_FIELDS = [
   { group: "Signature Fields", items: ["Signature", "Initial", "Date Signed"] },
   { group: "Personal Information Fields", items: ["Name", "Email", "Mobile"] },
   { group: "Data Input Fields", items: ["Text", "Checkbox"] },
+  { group: "Drawing Fields", items: ["Line"] },
 ];
 
 const FIELD_ICONS = {
@@ -32,6 +49,7 @@ const FIELD_ICONS = {
   Mobile: <i className="lni lni-phone" aria-hidden />,
   Text: "T",
   Checkbox: <i className="lni lni-check-square-2" aria-hidden />,
+  Line: <span aria-hidden style={{ fontWeight: 700 }}>—</span>,
   // Legacy icons kept for backward compat with existing documents
   Stamp: <i className="lni lni-stamp" aria-hidden />,
   Company: <i className="lni lni-buildings-1" aria-hidden />,
@@ -107,6 +125,7 @@ function fieldTypeToBackend(displayType) {
     Mobile: "mobile",
     Text: "text",
     Checkbox: "checkbox",
+    Line: "line",
     // Legacy mappings for existing documents
     Stamp: "stamp",
     Company: "company",
@@ -249,7 +268,13 @@ function DocumentDetailPage() {
   // Edit-in-place mode for a sent-but-unsigned document (no email, no status change).
   const [pendingEditMode, setPendingEditMode] = useState(location.state?.editPending === true);
   const [savingPendingEdits, setSavingPendingEdits] = useState(false);
+  const [pendingEditNotice, setPendingEditNotice] = useState(""); // confirmation shown after saving edits to a sent doc
   const [editingFieldId, setEditingFieldId] = useState(null); // ID of field being edited inline
+  // Line tool (Paint-style): draw a straight line by dragging from start to end point
+  const [lineDraw, setLineDraw] = useState(null); // { page, x1Pct, y1Pct, x2Pct, y2Pct } while actively drawing
+  const [drawingLineActive, setDrawingLineActive] = useState(false); // stable flag so the draw effect doesn't resubscribe each move
+  const [draggingEndpoint, setDraggingEndpoint] = useState(null); // { fieldId, which: 'start' | 'end' } while editing a line endpoint
+  const lineDrawRef = useRef(null);
   const dragStartRef = useRef({ fieldX: 0, fieldY: 0, clientX: 0, clientY: 0 });
   const resizeStartRef = useRef({ x: 0, y: 0, w: 0, h: 0, clientX: 0, clientY: 0 });
   const dragTargetRef = useRef(null);
@@ -346,28 +371,38 @@ function DocumentDetailPage() {
         const typeToLabel = (t) => {
           if (!t) return "Signature";
           const lower = String(t).toLowerCase();
-          const map = { signature: "Signature", initial: "Initial", date: "Date Signed", name: "Name", email: "Email", mobile: "Mobile", text: "Text", checkbox: "Checkbox", stamp: "Stamp", company: "Company", title: "Title", number: "Number", dropdown: "Dropdown", radio: "Radio", note: "Note", approve: "Approve", decline: "Decline" };
+          const map = { signature: "Signature", initial: "Initial", date: "Date Signed", name: "Name", email: "Email", mobile: "Mobile", text: "Text", checkbox: "Checkbox", line: "Line", stamp: "Stamp", company: "Company", title: "Title", number: "Number", dropdown: "Dropdown", radio: "Radio", note: "Note", approve: "Approve", decline: "Decline" };
           return map[lower] || (t.charAt(0).toUpperCase() + (t.slice(1) || "").toLowerCase());
         };
+        const pageHForFont = Number(docRes.data?.page1RenderHeight) || 792;
         const built = signerList.flatMap((sr) =>
-          (sr.signatureFields || []).map((f, i) => ({
-            ...f,
-            id: f.id || generateFieldId(),
-            signRequestId: sr._id,
-            type: typeToLabel(f.type),
-            dataLabel: f.dataLabel ?? `${typeToLabel(f.type)} ${String(i + 1)}`,
-            required: f.required !== false,
-            scale: f.scale ?? 100,
-            options: Array.isArray(f.options) ? f.options : [],
-            defaultOption: f.defaultOption ?? "",
-            page: f.page ?? 1,
-            xPct: f.xPct,
-            yPct: f.yPct,
-            wPct: f.wPct,
-            hPct: f.hPct,
-            pageX: f.x,
-            pageY: f.y,
-          }))
+          (sr.signatureFields || []).map((f, i) => {
+            const type = typeToLabel(f.type);
+            const mapped = {
+              ...f,
+              id: f.id || generateFieldId(),
+              signRequestId: sr._id,
+              type,
+              dataLabel: f.dataLabel ?? `${type} ${String(i + 1)}`,
+              required: f.required !== false,
+              scale: f.scale ?? 100,
+              options: Array.isArray(f.options) ? f.options : [],
+              defaultOption: f.defaultOption ?? "",
+              page: f.page ?? 1,
+              xPct: f.xPct,
+              yPct: f.yPct,
+              wPct: f.wPct,
+              hPct: f.hPct,
+              pageX: f.x,
+              pageY: f.y,
+            };
+            // Non-text fields: size the font to fill the box height so the text fills the field with
+            // no visible top/bottom gap (and renders the same in the editor, signer view, and PDF).
+            if (AUTO_FONT_TYPES.includes(type) && f.hPct != null) {
+              mapped.fontSize = Math.min(72, Math.max(6, Math.round((Number(f.hPct) / 100) * pageHForFont * 0.82)));
+            }
+            return mapped;
+          })
         );
         setPlacedFields(built);
         if (signerList.length && !selectedRecipientId) {
@@ -448,8 +483,8 @@ function DocumentDetailPage() {
     const defaultPage = 1;
     const DATA_INPUT_COMPACT = ["Radio"];
     const DATA_INPUT_RECTANGLE = ["Text", "Number", "Dropdown", "Name", "Email", "Mobile", "Company", "Title"];
-    const defWPct = type === "Checkbox" ? 2.3 : DATA_INPUT_COMPACT.includes(type) ? 12 : DATA_INPUT_RECTANGLE.includes(type) ? 20 : 14;
-    const defHPct = type === "Checkbox" ? 1.8 : DATA_INPUT_COMPACT.includes(type) ? 3 : DATA_INPUT_RECTANGLE.includes(type) ? 3 : 6;
+    const defWPct = type === "Line" ? 25 : type === "Checkbox" ? 2.3 : DATA_INPUT_COMPACT.includes(type) ? 12 : DATA_INPUT_RECTANGLE.includes(type) ? 20 : 14;
+    const defHPct = type === "Line" ? 1.5 : type === "Checkbox" ? 1.8 : DATA_INPUT_COMPACT.includes(type) ? 3 : DATA_INPUT_RECTANGLE.includes(type) ? 3 : 6;
     const base = {
       id: generateFieldId(),
       type,
@@ -512,9 +547,44 @@ function DocumentDetailPage() {
     if (type === "Date Signed") {
       newField = { ...newField, defaultValue: "" };
     }
+    // Non-text fields: start with a font that fills the box height so the placed text size is
+    // accurate to the field (auto-updates on resize, still overridable). Text box keeps its size.
+    if (["Name", "Email", "Mobile", "Company", "Title", "Number", "Date Signed"].includes(type)) {
+      const pagePtH = Number(doc?.page1RenderHeight) || 792;
+      newField.fontSize = Math.min(72, Math.max(6, Math.round((newField.hPct / 100) * pagePtH * 0.82)));
+    }
     setPlacedFields((prev) => [...prev, newField]);
     setSelectedFieldId(newField.id);
-  }, [placedFields.length, selectedRecipientId, signers]);
+  }, [placedFields.length, selectedRecipientId, signers, doc]);
+
+  /** Create a Line field from two drawn endpoints (percent of page). Bounding box is derived from the endpoints. */
+  const addLineField = useCallback((d) => {
+    const recipientId = selectedRecipientId || signers[0]?._id;
+    const xPct = Math.min(d.x1Pct, d.x2Pct);
+    const yPct = Math.min(d.y1Pct, d.y2Pct);
+    const wPct = Math.max(0.5, Math.abs(d.x2Pct - d.x1Pct));
+    const hPct = Math.max(0.5, Math.abs(d.y2Pct - d.y1Pct));
+    const newField = {
+      id: generateFieldId(),
+      type: "Line",
+      signRequestId: recipientId,
+      page: d.page,
+      xPct,
+      yPct,
+      wPct,
+      hPct,
+      x1Pct: d.x1Pct,
+      y1Pct: d.y1Pct,
+      x2Pct: d.x2Pct,
+      y2Pct: d.y2Pct,
+      required: false,
+      scale: 100,
+      dataLabel: `Line ${generateFieldId().slice(0, 8)}`,
+      tooltip: "",
+    };
+    setPlacedFields((prev) => [...prev, newField]);
+    setSelectedFieldId(newField.id);
+  }, [selectedRecipientId, signers]);
 
   const updateField = useCallback((fieldId, updates) => {
     setPlacedFields((prev) =>
@@ -639,7 +709,20 @@ function DocumentDetailPage() {
   const handleDocumentPlaceClick = useCallback((e) => {
     if (e.button !== 0) return;
     if (e.target.closest?.(".prepare-placed-field")) return;
-    
+
+    // Line tool: begin drawing a straight line that follows the cursor (Paint-style)
+    if (pendingFieldType === "Line") {
+      const coords = clientToPercentCoords(e.clientX, e.clientY);
+      if (!coords) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const start = { page: coords.page, x1Pct: coords.xPct, y1Pct: coords.yPct, x2Pct: coords.xPct, y2Pct: coords.yPct };
+      lineDrawRef.current = start;
+      setLineDraw(start);
+      setDrawingLineActive(true);
+      return;
+    }
+
     if (pendingFieldType) {
       const coords = clientToPercentCoords(e.clientX, e.clientY);
       if (!coords) return;
@@ -658,6 +741,79 @@ function DocumentDetailPage() {
       setSelectedFieldId(null);
     }
   }, [pendingFieldType, addField, clientToPercentCoords, pendingWPct, pendingHPct]);
+
+  /** While the Line tool is drawing: the end point follows the cursor; release commits the line. */
+  useEffect(() => {
+    if (!drawingLineActive) return;
+    const handlePointerMove = (e) => {
+      const coords = clientToPercentCoords(e.clientX, e.clientY);
+      if (!coords) return;
+      const start = lineDrawRef.current;
+      if (!start) return;
+      if (coords.page !== start.page) return; // keep the line on the page it started on
+      const next = { ...start, x2Pct: coords.xPct, y2Pct: coords.yPct };
+      lineDrawRef.current = next;
+      setLineDraw(next);
+    };
+    const handlePointerUp = () => {
+      const d = lineDrawRef.current;
+      lineDrawRef.current = null;
+      setLineDraw(null);
+      setDrawingLineActive(false);
+      setCursorOverlayPos(null);
+      if (!d) return;
+      const len = Math.hypot(d.x2Pct - d.x1Pct, d.y2Pct - d.y1Pct);
+      if (len < 1) return; // treat a tap/too-short drag as a no-op; keep the tool selected for another try
+      addLineField(d);
+      setPendingFieldType(null);
+    };
+    window.addEventListener("pointermove", handlePointerMove, { passive: true });
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, [drawingLineActive, clientToPercentCoords, addLineField]);
+
+  /** Begin dragging one endpoint of an existing line (Paint-style editing). */
+  const handleLineEndpointPointerDown = useCallback((e, field, which) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedFieldId(field.id);
+    setDraggingEndpoint({ fieldId: field.id, which });
+  }, []);
+
+  useEffect(() => {
+    if (!draggingEndpoint) return;
+    const handlePointerMove = (e) => {
+      const coords = clientToPercentCoords(e.clientX, e.clientY);
+      if (!coords) return;
+      setPlacedFields((prev) => prev.map((f) => {
+        if (f.id !== draggingEndpoint.fieldId) return f;
+        if (coords.page !== (f.page ?? 1)) return f; // keep the endpoint on the line's page
+        const np = { ...f };
+        if (draggingEndpoint.which === "start") { np.x1Pct = coords.xPct; np.y1Pct = coords.yPct; }
+        else { np.x2Pct = coords.xPct; np.y2Pct = coords.yPct; }
+        np.xPct = Math.min(np.x1Pct, np.x2Pct);
+        np.yPct = Math.min(np.y1Pct, np.y2Pct);
+        np.wPct = Math.max(0.5, Math.abs(np.x2Pct - np.x1Pct));
+        np.hPct = Math.max(0.5, Math.abs(np.y2Pct - np.y1Pct));
+        return np;
+      }));
+    };
+    const handlePointerUp = () => setDraggingEndpoint(null);
+    window.addEventListener("pointermove", handlePointerMove, { passive: true });
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, [draggingEndpoint, clientToPercentCoords]);
 
   const handleFieldPointerDown = useCallback((e, field) => {
     if (e.button !== 0) return;
@@ -678,30 +834,36 @@ function DocumentDetailPage() {
       clientY: e.clientY,
       startXPct: coords?.xPct ?? field.xPct ?? 8,
       startYPct: coords?.yPct ?? field.yPct ?? 10,
+      isLine: field.type === "Line",
+      x1Pct: field.x1Pct,
+      y1Pct: field.y1Pct,
+      x2Pct: field.x2Pct,
+      y2Pct: field.y2Pct,
     };
   }, [clientToPercentCoords]);
 
   useEffect(() => {
     if (!draggingFieldId) return;
     const handlePointerMove = (e) => {
-      const { fieldXPct, fieldYPct, fieldWPct, fieldHPct, startXPct, startYPct } = dragStartRef.current;
+      const s = dragStartRef.current;
+      const { fieldXPct, fieldYPct, fieldWPct, fieldHPct, startXPct, startYPct } = s;
       const coords = clientToPercentCoords(e.clientX, e.clientY);
       if (!coords) return;
       const dxPct = coords.xPct - startXPct;
       const dyPct = coords.yPct - startYPct;
       const newXPct = Math.max(0, Math.min(100 - fieldWPct, fieldXPct + dxPct));
       const newYPct = Math.max(0, Math.min(100 - fieldHPct, fieldYPct + dyPct));
-      updateField(draggingFieldId, { xPct: newXPct, yPct: newYPct });
-      dragStartRef.current = {
-        fieldXPct: newXPct,
-        fieldYPct: newYPct,
-        fieldWPct,
-        fieldHPct,
-        clientX: e.clientX,
-        clientY: e.clientY,
-        startXPct: coords.xPct,
-        startYPct: coords.yPct,
-      };
+      if (s.isLine && s.x1Pct != null) {
+        // Translate both endpoints by the same (clamped) delta so the whole line moves rigidly
+        const adx = newXPct - fieldXPct;
+        const ady = newYPct - fieldYPct;
+        const nx1 = s.x1Pct + adx, ny1 = s.y1Pct + ady, nx2 = s.x2Pct + adx, ny2 = s.y2Pct + ady;
+        updateField(draggingFieldId, { xPct: newXPct, yPct: newYPct, x1Pct: nx1, y1Pct: ny1, x2Pct: nx2, y2Pct: ny2 });
+        dragStartRef.current = { ...s, fieldXPct: newXPct, fieldYPct: newYPct, x1Pct: nx1, y1Pct: ny1, x2Pct: nx2, y2Pct: ny2, clientX: e.clientX, clientY: e.clientY, startXPct: coords.xPct, startYPct: coords.yPct };
+      } else {
+        updateField(draggingFieldId, { xPct: newXPct, yPct: newYPct });
+        dragStartRef.current = { ...s, fieldXPct: newXPct, fieldYPct: newYPct, clientX: e.clientX, clientY: e.clientY, startXPct: coords.xPct, startYPct: coords.yPct };
+      }
     };
     const handlePointerUp = (e) => {
       const target = dragTargetRef.current;
@@ -743,10 +905,18 @@ function DocumentDetailPage() {
       wPct: field.wPct ?? 14,
       hPct: field.hPct ?? 6,
       page: field.page ?? 1,
+      type: field.type,
       clientX: e.clientX,
       clientY: e.clientY,
     };
   }, []);
+
+  /** Font size (pt) that fills a field of the given height %, matching the signed PDF. */
+  const fontPtForFieldHeight = useCallback((hPct) => {
+    const pagePtH = Number(doc?.page1RenderHeight) || 792;
+    const boxHeightPt = (hPct / 100) * pagePtH;
+    return Math.min(72, Math.max(6, Math.round(boxHeightPt * 0.82)));
+  }, [doc]);
 
   useEffect(() => {
     if (!resizingFieldId || !resizeHandle) return;
@@ -775,7 +945,12 @@ function DocumentDetailPage() {
         hPct = hPct - dh;
         yPct = yPct + dh;
       }
-      updateField(resizingFieldId, { xPct, yPct, wPct, hPct });
+      const patch = { xPct, yPct, wPct, hPct };
+      // Non-text fields: font auto-fills the box height as it's resized (still overridable afterwards).
+      if (AUTO_FONT_TYPES.includes(resizeStartRef.current.type)) {
+        patch.fontSize = fontPtForFieldHeight(hPct);
+      }
+      updateField(resizingFieldId, patch);
       resizeStartRef.current = { ...resizeStartRef.current, xPct, yPct, wPct, hPct, clientX: e.clientX, clientY: e.clientY };
     };
     const handlePointerUp = () => {
@@ -788,7 +963,7 @@ function DocumentDetailPage() {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
     };
-  }, [resizingFieldId, resizeHandle, updateField]);
+  }, [resizingFieldId, resizeHandle, updateField, fontPtForFieldHeight]);
 
   const handleAddSigner = async (e) => {
     e.preventDefault();
@@ -901,6 +1076,12 @@ function DocumentDetailPage() {
       tooltip: f.tooltip,
       scale: f.scale,
     };
+    if (f.type === "Line") {
+      if (f.x1Pct != null) base.x1Pct = f.x1Pct;
+      if (f.y1Pct != null) base.y1Pct = f.y1Pct;
+      if (f.x2Pct != null) base.x2Pct = f.x2Pct;
+      if (f.y2Pct != null) base.y2Pct = f.y2Pct;
+    }
     if (f.type === "Dropdown" || f.type === "Radio") {
       base.options = Array.isArray(f.options) ? f.options : [];
       base.defaultOption = f.defaultOption ?? "";
@@ -962,18 +1143,29 @@ function DocumentDetailPage() {
   const handleSavePendingEdits = useCallback(async () => {
     setSavingPendingEdits(true);
     setError("");
+    setPendingEditNotice("");
     try {
-      await apiClient.put(`/documents/${id}/signing-fields`, {
+      const res = await apiClient.put(`/documents/${id}/signing-fields`, {
         fields: placedFields.map(mapFieldToPayload),
       });
-      setPendingEditMode(false);
+      const notified = res.data?.notified ?? 0;
+      // Leave the editor and return to the Agreements list after saving, carrying a confirmation
+      // message (e.g. "2 recipients notified by email") for the Agreements page to surface.
+      navigate("/agreements", {
+        state: {
+          savedNotice:
+            notified > 0
+              ? `Changes saved. ${notified} recipient${notified === 1 ? "" : "s"} notified by email.`
+              : "Changes saved.",
+        },
+      });
     } catch (err) {
       console.error(err);
       setError(err.response?.data?.error || "Failed to save changes");
     } finally {
       setSavingPendingEdits(false);
     }
-  }, [id, placedFields, mapFieldToPayload]);
+  }, [id, placedFields, mapFieldToPayload, navigate]);
 
   const isSigningField = (type) =>
     type === "Signature" || type === "Initial";
@@ -1678,7 +1870,9 @@ function DocumentDetailPage() {
                         onPageCount={setPdfPageCount}
                         renderPageOverlay={(pageNum) => {
                           const pageFields = placedFields.filter((f) => (f.page ?? 1) === pageNum);
-                          const showGhost = pendingFieldType && cursorOverlayPos?.page === pageNum;
+                          // Box ghost for every field EXCEPT Line (Line uses a draw-to-create rubber band instead)
+                          const showGhost = pendingFieldType && pendingFieldType !== "Line" && cursorOverlayPos?.page === pageNum;
+                          const showLinePreview = lineDraw && lineDraw.page === pageNum;
                           return (
                             <>
                               {showGhost && (
@@ -1700,11 +1894,23 @@ function DocumentDetailPage() {
                                   </span>
                                 </div>
                               )}
+                              {showLinePreview && (
+                                <svg
+                                  className="prepare-line-preview"
+                                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none", overflow: "visible", zIndex: 150 }}
+                                  viewBox="0 0 100 100"
+                                  preserveAspectRatio="none"
+                                  aria-hidden
+                                >
+                                  <line x1={lineDraw.x1Pct} y1={lineDraw.y1Pct} x2={lineDraw.x2Pct} y2={lineDraw.y2Pct} stroke="#111" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+                                </svg>
+                              )}
                               {pageFields.map((f) => {
                                 const color = getRecipientColor(f.signRequestId, signers);
                                 const isSignatureType = f.type === "Signature" || f.type === "Initial";
                                 const isNoteField = f.type === "Note";
                                 const isCheckboxField = f.type === "Checkbox";
+                                const isLineField = f.type === "Line";
                                 const isDataInputField = ["Name", "Email", "Mobile", "Company", "Title", "Text", "Number"].includes(f.type);
                                 const isSelected = selectedFieldId === f.id;
                                 const showHandles = isSelected;
@@ -1712,24 +1918,51 @@ function DocumentDetailPage() {
                                 const yPct = f.yPct != null ? f.yPct : 10;
                                 const wPct = f.wPct != null ? f.wPct : 14;
                                 const hPct = f.hPct != null ? f.hPct : 6;
-                                const fontScale = Math.max(0.5, Math.min(1, availableWidth / 800));
-                                const baseRem = Math.max(0.5, Math.min(1.2, hPct * 0.15));
-                                const dynamicFontSize = `${Math.max(14, Math.round(baseRem * 16 * fontScale))}px`;
+                                // Line endpoints expressed as % within the field's bounding box (for the SVG + endpoint handles)
+                                let lineLocal = null;
+                                if (isLineField) {
+                                  const hasEndpoints = f.x1Pct != null && f.y1Pct != null && f.x2Pct != null && f.y2Pct != null;
+                                  const bw = wPct || 0.0001;
+                                  const bh = hPct || 0.0001;
+                                  lineLocal = {
+                                    x1: hasEndpoints ? ((f.x1Pct - xPct) / bw) * 100 : 0,
+                                    y1: hasEndpoints ? ((f.y1Pct - yPct) / bh) * 100 : 50,
+                                    x2: hasEndpoints ? ((f.x2Pct - xPct) / bw) * 100 : 100,
+                                    y2: hasEndpoints ? ((f.y2Pct - yPct) / bh) * 100 : 50,
+                                  };
+                                }
+                                // WYSIWYG: size overlay text exactly as the signed PDF will. The PDF draws field text
+                                // at the field's point font size (clamped) and we convert that to on-screen px via the
+                                // page's point→pixel scale — so the editor preview and the final PDF render text at the
+                                // same size, and both shrink proportionally on small screens / zoom-out.
+                                const pagePtW = Number(doc?.page1RenderWidth) || 612;
+                                const pagePtH = Number(doc?.page1RenderHeight) || 792;
+                                const pxPerPt = (availableWidth * scale) / pagePtW;
+                                const boxHeightPt = (hPct / 100) * pagePtH;
+                                const effFontPt = f.fontSize != null && f.fontSize > 0
+                                  ? Math.min(72, Math.max(6, Number(f.fontSize)))
+                                  : Math.min(14, Math.max(10, boxHeightPt * 0.7));
+                                const dynamicFontSize = `${Math.max(6, Math.round(effFontPt * pxPerPt))}px`;
+                                const noteFontSize = `${Math.max(8, Math.round(11 * pxPerPt))}px`;
+                                // Render in the same font the PDF will use so the preview matches the burned output.
+                                const fieldFontFamily = pdfMatchingFontStack(f.fontFamily);
                                 return (
                                   <div
                                     key={f.id}
                                     ref={f.page === 1 ? overlayRef : undefined}
                                     role="button"
                                     tabIndex={0}
-                                    className={`prepare-placed-field ${isSignatureType ? "prepare-placed-field-sign" : ""} ${isNoteField ? "prepare-placed-field-note" : ""} ${isCheckboxField ? "prepare-placed-field-checkbox" : ""} ${f.type === "Radio" ? "prepare-placed-field-radio" : ""} ${["Text", "Number", "Dropdown", "Name", "Email", "Mobile", "Company", "Title"].includes(f.type) ? "prepare-placed-field-data-rect" : ""} ${isSelected ? "selected" : ""} ${draggingFieldId === f.id ? "dragging" : ""} ${resizingFieldId === f.id ? "resizing" : ""}`}
+                                    className={`prepare-placed-field ${isSignatureType ? "prepare-placed-field-sign" : ""} ${isNoteField ? "prepare-placed-field-note" : ""} ${isCheckboxField ? "prepare-placed-field-checkbox" : ""} ${isLineField ? "prepare-placed-field-line" : ""} ${f.type === "Radio" ? "prepare-placed-field-radio" : ""} ${["Text", "Number", "Dropdown", "Name", "Email", "Mobile", "Company", "Title"].includes(f.type) ? "prepare-placed-field-data-rect" : ""} ${isSelected ? "selected" : ""} ${draggingFieldId === f.id ? "dragging" : ""} ${resizingFieldId === f.id ? "resizing" : ""}`}
                                     style={{
                                       position: "absolute",
                                       left: `${xPct}%`,
                                       top: `${yPct}%`,
                                       width: `${wPct}%`,
                                       height: `${hPct}%`,
-                                      borderColor: color.border,
-                                      backgroundColor: color.bg,
+                                      borderColor: isLineField ? "transparent" : color.border,
+                                      backgroundColor: isLineField ? "transparent" : color.bg,
+                                      // Line: don't let the (possibly large) bounding box swallow clicks — only the stroke/endpoints are interactive
+                                      ...(isLineField ? { pointerEvents: "none", border: "none" } : {}),
                                     }}
                                     title={isDataInputField ? "Double-click to enter/edit value" : undefined}
                                     onPointerDown={(e) => handleFieldPointerDown(e, f)}
@@ -1762,9 +1995,30 @@ function DocumentDetailPage() {
                                       }
                                     }}
                                   >
-                                    {!isCheckboxField && <span className="prepare-placed-field-icon" aria-hidden>{FIELD_ICONS[f.type] || "•"}</span>}
-                                    {isNoteField ? (
-                                      <div className={`prepare-placed-field-note-content ${!(f.noteContent ?? "").trim() ? "is-placeholder" : ""}`}>
+                                    {!isCheckboxField && !isLineField && !isDataInputField && f.type !== "Date Signed" && <span className="prepare-placed-field-icon" aria-hidden>{FIELD_ICONS[f.type] || "•"}</span>}
+                                    {isLineField ? (
+                                      <svg
+                                        className="prepare-placed-field-line-svg"
+                                        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", overflow: "visible" }}
+                                        viewBox="0 0 100 100"
+                                        preserveAspectRatio="none"
+                                      >
+                                        {/* Wide transparent hit area: click/drag anywhere on the line to select and move it */}
+                                        <line
+                                          x1={lineLocal.x1} y1={lineLocal.y1} x2={lineLocal.x2} y2={lineLocal.y2}
+                                          stroke="transparent" strokeWidth={16} strokeLinecap="round" vectorEffect="non-scaling-stroke"
+                                          style={{ pointerEvents: "stroke", cursor: "move" }}
+                                          onPointerDown={(e) => handleFieldPointerDown(e, f)}
+                                        />
+                                        {/* Visible line */}
+                                        <line
+                                          x1={lineLocal.x1} y1={lineLocal.y1} x2={lineLocal.x2} y2={lineLocal.y2}
+                                          stroke="#111" strokeWidth={2} strokeLinecap="round" vectorEffect="non-scaling-stroke"
+                                          style={{ pointerEvents: "none" }}
+                                        />
+                                      </svg>
+                                    ) : isNoteField ? (
+                                      <div className={`prepare-placed-field-note-content ${!(f.noteContent ?? "").trim() ? "is-placeholder" : ""}`} style={{ fontSize: noteFontSize }}>
                                         {(f.noteContent ?? "").trim() || "Note for recipient"}
                                       </div>
                                     ) : isCheckboxField ? (
@@ -1779,11 +2033,38 @@ function DocumentDetailPage() {
                                         autoFocus={true}
                                         fontSize={dynamicFontSize}
                                       />
-                                    ) : ["Name", "Email", "Mobile", "Company", "Title", "Text", "Number"].includes(f.type) && editingFieldId === f.id ? (
+                                    ) : f.type === "Text" && editingFieldId === f.id ? (
+                                      <textarea
+                                        className="prepare-placed-field-inline-input"
+                                        style={{
+                                          fontSize: dynamicFontSize,
+                                          fontFamily: fieldFontFamily,
+                                          width: "100%", height: "100%",
+                                          resize: "none", overflow: "hidden",
+                                          whiteSpace: "pre-wrap", wordBreak: "break-word",
+                                          lineHeight: 1.2, textAlign: "left",
+                                        }}
+                                        value={f.defaultValue ?? ""}
+                                        onChange={(e) => updateField(f.id, { defaultValue: e.target.value })}
+                                        onBlur={() => setEditingFieldId(null)}
+                                        onKeyDown={(e) => {
+                                          // Enter inserts a newline (multi-line text); Escape finishes editing.
+                                          if (e.key === "Escape") {
+                                            e.preventDefault();
+                                            setEditingFieldId(null);
+                                          }
+                                          e.stopPropagation();
+                                        }}
+                                        onClick={(e) => e.stopPropagation()}
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        placeholder="Text"
+                                        autoFocus
+                                      />
+                                    ) : ["Name", "Email", "Mobile", "Company", "Title", "Number"].includes(f.type) && editingFieldId === f.id ? (
                                       <input
                                         type="text"
                                         className="prepare-placed-field-inline-input"
-                                        style={{ fontSize: dynamicFontSize }}
+                                        style={{ fontSize: dynamicFontSize, fontFamily: fieldFontFamily }}
                                         value={f.defaultValue ?? ""}
                                         onChange={(e) => updateField(f.id, { defaultValue: e.target.value })}
                                         onBlur={() => setEditingFieldId(null)}
@@ -1800,23 +2081,39 @@ function DocumentDetailPage() {
                                         autoFocus
                                       />
                                     ) : f.type === "Name" ? (
-                                      <span className="prepare-placed-field-label" style={{ fontSize: dynamicFontSize }}>
+                                      <span className="prepare-placed-field-label" style={{ fontSize: dynamicFontSize, fontFamily: fieldFontFamily, whiteSpace: "normal", wordBreak: "break-word" }}>
                                         {(f.defaultValue ?? "").trim() || (f.nameFormat ?? "Full Name")}
                                       </span>
                                     ) : ["Email", "Mobile", "Company", "Title", "Text", "Number"].includes(f.type) ? (
-                                      <span className="prepare-placed-field-label" style={{ fontSize: dynamicFontSize }}>
+                                      <span className="prepare-placed-field-label" style={{ fontSize: dynamicFontSize, fontFamily: fieldFontFamily, whiteSpace: "normal", wordBreak: "break-word" }}>
                                         {(f.defaultValue ?? "").trim() || f.type}
                                       </span>
                                     ) : f.type === "Date Signed" ? (
-                                      <span className="prepare-placed-field-label" style={{ whiteSpace: "normal", fontSize: dynamicFontSize }}>
+                                      <span className="prepare-placed-field-label" style={{ whiteSpace: "normal", fontSize: dynamicFontSize, fontFamily: fieldFontFamily }}>
                                         {(f.defaultValue ?? "").trim() || "DD/MM/YYYY"}
                                       </span>
                                     ) : (
-                                      <span className="prepare-placed-field-label">
+                                      <span className="prepare-placed-field-label" style={{ fontSize: dynamicFontSize }}>
                                         {f.type === "Signature" ? "Sign" : f.type}
                                       </span>
                                     )}
-                                    {showHandles && (
+                                    {showHandles && isLineField && lineLocal && (
+                                      <>
+                                        <div
+                                          className="prepare-line-endpoint"
+                                          style={{ left: `${lineLocal.x1}%`, top: `${lineLocal.y1}%` }}
+                                          onPointerDown={(e) => handleLineEndpointPointerDown(e, f, "start")}
+                                          aria-hidden
+                                        />
+                                        <div
+                                          className="prepare-line-endpoint"
+                                          style={{ left: `${lineLocal.x2}%`, top: `${lineLocal.y2}%` }}
+                                          onPointerDown={(e) => handleLineEndpointPointerDown(e, f, "end")}
+                                          aria-hidden
+                                        />
+                                      </>
+                                    )}
+                                    {showHandles && !isLineField && (
                                       <>
                                         {["n", "s", "e", "w", "nw", "ne", "sw", "se"].map((h) => (
                                           <div
@@ -2203,9 +2500,12 @@ function DocumentDetailPage() {
                             className="prepare-property-select prepare-property-select-narrow"
                             aria-label="Font size"
                           >
-                            {[6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20].map((n) => (
-                              <option key={n} value={n}>{n}</option>
-                            ))}
+                            {Array.from(new Set([6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72, Math.round(Number(selectedField.fontSize) || 14)]))
+                              .filter((n) => n >= 6 && n <= 72)
+                              .sort((a, b) => a - b)
+                              .map((n) => (
+                                <option key={n} value={n}>{n}</option>
+                              ))}
                           </select>
                           <div className="prepare-property-style-btns">
                             <button
@@ -2678,9 +2978,12 @@ function DocumentDetailPage() {
                             className="prepare-property-select prepare-property-select-narrow"
                             aria-label="Font size"
                           >
-                            {[6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20].map((n) => (
-                              <option key={n} value={n}>{n}</option>
-                            ))}
+                            {Array.from(new Set([6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48, 72, Math.round(Number(selectedField.fontSize) || 14)]))
+                              .filter((n) => n >= 6 && n <= 72)
+                              .sort((a, b) => a - b)
+                              .map((n) => (
+                                <option key={n} value={n}>{n}</option>
+                              ))}
                           </select>
                           <div className="prepare-property-style-btns">
                             <button
@@ -2831,7 +3134,7 @@ function DocumentDetailPage() {
           {isPendingEdit ? (
             <span className="prepare-footer-save-wrap">
               <span className="prepare-footer-save-hint" role="status">
-                Editing a sent document — recipients are not re-notified.
+                {pendingEditNotice || "Saving emails recipients who haven't signed yet that the document was updated."}
               </span>
               <button
                 type="button"

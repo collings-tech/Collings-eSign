@@ -117,6 +117,113 @@ function fieldToPdfBox(f, pageWidth, pageHeight) {
 }
 
 /**
+ * Draw "line" fields — a horizontal rule the sender places to strike through / cross out
+ * clauses (DocuSign-style "Line" tool). These are static annotations: they carry no signer
+ * input and are drawn through the vertical centre of the field box.
+ * @param {import('pdf-lib').PDFPage[]} pages
+ * @param {Array} fields - signature fields (any type); only 'line' fields are drawn
+ */
+function drawLineFields(pages, fields) {
+  if (!Array.isArray(fields) || !fields.length) return;
+  for (const f of fields) {
+    if (String(f.type || "").toLowerCase() !== "line") continue;
+    const pageIndex = Math.max(0, (f.page || 1) - 1);
+    const page = pages[pageIndex];
+    if (!page) continue;
+    const pageWidth = page.getWidth();
+    const pageHeight = page.getHeight();
+    let start, end;
+    const hasEndpoints = f.x1Pct != null && f.y1Pct != null && f.x2Pct != null && f.y2Pct != null;
+    if (hasEndpoints) {
+      // Free-angle line drawn by the sender. PDF y-axis runs bottom-up, percent y runs top-down.
+      start = { x: (Number(f.x1Pct) / 100) * pageWidth, y: pageHeight - (Number(f.y1Pct) / 100) * pageHeight };
+      end = { x: (Number(f.x2Pct) / 100) * pageWidth, y: pageHeight - (Number(f.y2Pct) / 100) * pageHeight };
+    } else {
+      // Legacy line stored only as a box: draw horizontally through the box centre
+      const { x, yPdf, w, h } = fieldToPdfBox(f, pageWidth, pageHeight);
+      const midY = yPdf + h / 2;
+      start = { x, y: midY };
+      end = { x: x + w, y: midY };
+    }
+    try {
+      page.drawLine({ start, end, thickness: 2, color: rgb(0, 0, 0) });
+    } catch (err) {
+      console.error("[pdfSign] Failed to draw line field:", err.message);
+    }
+  }
+}
+
+/**
+ * Word-wrap `text` to fit `maxWidth` at `fontSizePt`, mirroring the editor preview's
+ * CSS (`white-space: normal; word-break: break-word`): wrap on spaces, and break a single
+ * over-long word character-by-character so it never overflows the box.
+ * Honours explicit newlines in the value.
+ * @returns {string[]} the wrapped lines
+ */
+function wrapTextLines(text, font, fontSizePt, maxWidth) {
+  const widthOf = (s) => {
+    try { return font.widthOfTextAtSize(s, fontSizePt); } catch { return s.length * fontSizePt * 0.5; }
+  };
+  const lines = [];
+  for (const para of String(text).split(/\r?\n/)) {
+    let line = "";
+    const append = (word) => {
+      const candidate = line ? `${line} ${word}` : word;
+      if (widthOf(candidate) <= maxWidth) { line = candidate; return; }
+      if (line) { lines.push(line); line = ""; }
+      if (widthOf(word) <= maxWidth) { line = word; return; }
+      // Word alone is wider than the box: break it across lines, char by char.
+      let chunk = "";
+      for (const ch of Array.from(word)) {
+        if (chunk && widthOf(chunk + ch) > maxWidth) { lines.push(chunk); chunk = ch; }
+        else chunk += ch;
+      }
+      line = chunk;
+    };
+    for (const word of para.split(/\s+/)) {
+      if (word !== "") append(word);
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+/**
+ * Draw `text` wrapped and vertically centred inside the field box, matching how the editor
+ * preview renders a placed field (wrap within the box width, text block centred vertically).
+ * Coordinates are PDF points (origin bottom-left).
+ */
+function drawTextInBox(page, text, { x, yPdf, w, h, font, fontSizePt, color, underline, align = "center" }) {
+  const maxWidth = Math.max(1, w); // full box width (no padding) so wrapping matches the on-screen field
+  const minSize = 5;
+  // Start at the field's chosen font size; only shrink below it if the wrapped text would overflow
+  // the box height — so short text keeps its size and a long value still shows in full.
+  let size = Math.max(minSize, fontSizePt);
+  let lines = wrapTextLines(text, font, size, maxWidth);
+  while (size > minSize && lines.length * size * 1.2 > h) {
+    size -= 0.5;
+    lines = wrapTextLines(text, font, size, maxWidth);
+  }
+  const lineHeight = size * 1.2;
+  const blockHeight = lines.length * lineHeight;
+  // 'top' anchors the block to the box top (matches the signer's multi-line textarea); 'center'
+  // vertically centres it (matches a single-line input). Keeps the field and the PDF aligned.
+  const blockTop = align === "top" ? (yPdf + h) : (yPdf + h / 2 + blockHeight / 2);
+  const textX = x; // no left padding — text fills the box exactly (matches editor + signer)
+  for (let i = 0; i < lines.length; i++) {
+    const ln = lines[i];
+    if (!ln) continue;
+    // Baseline ≈ line top minus the ascent so glyphs sit within the line slot.
+    const baselineY = blockTop - i * lineHeight - size * 0.8;
+    page.drawText(ln, { x: textX, y: baselineY, size, font, color });
+    if (underline) {
+      const tw = font.widthOfTextAtSize(ln, size);
+      page.drawLine({ start: { x: textX, y: baselineY - 1 }, end: { x: textX + tw, y: baselineY - 1 }, thickness: Math.max(0.5, size / 18), color });
+    }
+  }
+}
+
+/**
  * Embed the signer's signature into the document PDF and save.
  * Uses the document's current PDF (signedKey/signedFilePath if set, else originalKey/originalFilePath).
  * When using Supabase: downloads from storage, embeds, uploads to documents/{docId}/signed.pdf, returns key.
@@ -406,9 +513,13 @@ async function embedSignatureInPdf(doc, signRequest) {
     if (!textFieldTypes.includes(typeLower)) continue;
     const fieldKey = getFieldKey(f);
     let value = fieldValues[fieldKey] ?? fieldValues[f.id];
+    // Whether the signer has an explicit saved entry (even an empty one = intentionally cleared).
+    const hasExplicitValue = fieldValues[fieldKey] != null || fieldValues[f.id] != null;
     if (value == null || String(value).trim() === "") {
       if (f.readOnly && typeLower === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
       else if (typeLower === "checkbox") value = f.checked === true ? "Yes" : "";
+      // Sender-placed default text shows when the signer left the field untouched (no saved entry).
+      else if (!hasExplicitValue && (f.defaultValue ?? "").toString().trim()) value = String(f.defaultValue).trim();
       else continue;
     }
 
@@ -451,32 +562,23 @@ async function embedSignatureInPdf(doc, signRequest) {
     let fontSizePt = f.fontSize != null && f.fontSize > 0 ? Math.min(72, Math.max(6, Number(f.fontSize))) : Math.min(14, Math.max(10, innerH * 0.7));
     if (!Number.isFinite(fontSizePt) || fontSizePt <= 0) fontSizePt = 10;
     const textColor = getTextColor(f.fontColor);
-    const textX = innerX + 1;
-    const textY = innerY + Math.min(3, innerH * 0.15);
 
     try {
       const textFont = await getTextFont(pdfDoc, f);
-      page.drawText(text, {
-        x: textX,
-        y: textY,
-        size: fontSizePt,
-        font: textFont,
-        color: textColor,
+      // Wrap inside the box so the signed PDF matches the on-screen field. Multi-line Text aligns to
+      // the top (like the signer's textarea); single-line fields stay vertically centred.
+      drawTextInBox(page, text, {
+        x: innerX, yPdf: innerY, w: innerW, h: innerH,
+        font: textFont, fontSizePt, color: textColor, underline: f.underline,
+        align: typeLower === "text" ? "top" : "center",
       });
-      if (f.underline) {
-        const textWidth = textFont.widthOfTextAtSize(text, fontSizePt);
-        const underlineY = textY - 1;
-        page.drawLine({
-          start: { x: textX, y: underlineY },
-          end: { x: textX + textWidth, y: underlineY },
-          thickness: Math.max(0.5, fontSizePt / 18),
-          color: textColor,
-        });
-      }
     } catch (err) {
       console.error("[pdfSign] Failed to draw text field:", err.message);
     }
   }
+
+  // Draw sender-placed "line" annotations (cross-outs) for this signer's fields
+  drawLineFields(pages, fields);
 
   const outBytes = await pdfDoc.save();
   const outBuffer = Buffer.from(outBytes);
@@ -649,9 +751,13 @@ async function embedAllSignaturesInPdf(doc, allSignRequests) {
       if (!textFieldTypes.includes(typeLower)) continue;
       const fieldKey = getFieldKey(f);
       let value = fieldValues[fieldKey] ?? fieldValues[f.id];
+      // Whether the signer has an explicit saved entry (even an empty one = intentionally cleared).
+      const hasExplicitValue = fieldValues[fieldKey] != null || fieldValues[f.id] != null;
       if (value == null || String(value).trim() === "") {
         if (f.readOnly && typeLower === "text" && (f.addText ?? "").trim()) value = String(f.addText).trim();
         else if (typeLower === "checkbox") value = f.checked === true ? "Yes" : "";
+        // Sender-placed default text shows when the signer left the field untouched (no saved entry).
+        else if (!hasExplicitValue && (f.defaultValue ?? "").toString().trim()) value = String(f.defaultValue).trim();
         else continue;
       }
 
@@ -681,15 +787,18 @@ async function embedAllSignaturesInPdf(doc, allSignRequests) {
       if (!Number.isFinite(fontSizePt) || fontSizePt <= 0) fontSizePt = 10;
       try {
         const textFont = await getTextFont(pdfDoc, f);
-        const textX = x + 1;
-        const textY = yPdf + Math.min(3, innerH * 0.15);
-        page.drawText(text, { x: textX, y: textY, size: fontSizePt, font: textFont, color: getTextColor(f.fontColor) });
-        if (f.underline) {
-          const textWidth = textFont.widthOfTextAtSize(text, fontSizePt);
-          page.drawLine({ start: { x: textX, y: textY - 1 }, end: { x: textX + textWidth, y: textY - 1 }, thickness: Math.max(0.5, fontSizePt / 18), color: getTextColor(f.fontColor) });
-        }
+        // Wrap inside the box so the signed PDF matches the on-screen field. Multi-line Text aligns to
+        // the top (like the signer's textarea); single-line fields stay vertically centred.
+        drawTextInBox(page, text, {
+          x, yPdf, w: innerW, h: innerH,
+          font: textFont, fontSizePt, color: getTextColor(f.fontColor), underline: f.underline,
+          align: typeLower === "text" ? "top" : "center",
+        });
       } catch { /* ignore */ }
     }
+
+    // Draw sender-placed "line" annotations (cross-outs) for this signer's fields
+    drawLineFields(pages, fields);
   }
 
   const outBytes = await pdfDoc.save();

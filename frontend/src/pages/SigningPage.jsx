@@ -8,6 +8,61 @@ import AdoptSignatureModal from "../components/AdoptSignatureModal.jsx";
 import DatePicker from "../components/DatePicker.jsx";
 import collingsLogo from "../assets/collings-logo-1.png";
 
+const SIGN_LINE_HEIGHT_RATIO = 1.2;
+/**
+ * Web font stack that matches the standard font the PDF will embed (see pdfSign getTextFont):
+ * Lucida Console/Courier → Courier, Times/Georgia → Times, everything else → Helvetica. Using the
+ * metrically-equivalent web font (Courier New / Times New Roman / Arial) makes the field on screen
+ * wrap and size exactly like the burned PDF — so typing in the field looks like writing on the PDF.
+ */
+function pdfMatchingFontStack(fontFamily) {
+  const fam = (fontFamily || "").toLowerCase();
+  if (fam.includes("times") || fam.includes("georgia")) return '"Times New Roman", Times, serif';
+  if (fam.includes("courier") || fam.includes("lucida console")) return '"Courier New", Courier, monospace';
+  return 'Arial, Helvetica, sans-serif';
+}
+let _signMeasureCtx = null;
+/** Real text width (px) at the given size in the field's own font, for wrap/shrink calculations. */
+function measureSignTextWidth(text, fontPx, fontCss) {
+  if (typeof document === "undefined") return text.length * fontPx * 0.6;
+  if (!_signMeasureCtx) _signMeasureCtx = document.createElement("canvas").getContext("2d");
+  _signMeasureCtx.font = `${fontPx}px ${fontCss}`;
+  return _signMeasureCtx.measureText(text).width;
+}
+/** Count wrapped lines (wrap on spaces, break over-long words) — mirrors the editor + PDF wrapping. */
+function countSignWrappedLines(text, fontPx, textWidthPx, fontCss) {
+  const maxWidth = Math.max(1, textWidthPx);
+  const widthOf = (s) => measureSignTextWidth(s, fontPx, fontCss);
+  let lineCount = 0;
+  for (const para of String(text).split(/\r?\n/)) {
+    let line = "";
+    const append = (word) => {
+      const candidate = line ? `${line} ${word}` : word;
+      if (widthOf(candidate) <= maxWidth) { line = candidate; return; }
+      if (line) { lineCount++; line = ""; }
+      if (widthOf(word) <= maxWidth) { line = word; return; }
+      let chunk = "";
+      for (const ch of Array.from(word)) {
+        if (chunk && widthOf(chunk + ch) > maxWidth) { lineCount++; chunk = ch; }
+        else chunk += ch;
+      }
+      line = chunk;
+    };
+    for (const word of para.split(/\s+/)) { if (word !== "") append(word); }
+    lineCount++;
+  }
+  return Math.max(1, lineCount);
+}
+/** Largest font ≤ maxPx at which `text` fits the box (width + height), matching the editor + PDF. */
+function fitSignFontPx(text, textWidthPx, boxHpx, maxPx, fontCss) {
+  const minPx = 5;
+  let fs = Math.max(minPx, Math.min(maxPx, boxHpx * 0.95));
+  while (fs > minPx && countSignWrappedLines(text, fs, textWidthPx, fontCss) * fs * SIGN_LINE_HEIGHT_RATIO > boxHpx) {
+    fs -= 0.5;
+  }
+  return Math.floor(fs);
+}
+
 export default function SigningPage() {
   const { token } = useParams();
   const [info, setInfo] = useState(null);
@@ -481,11 +536,10 @@ export default function SigningPage() {
   const getTextFieldFormatStyle = (f) => {
     const baseSize = Math.max(11, Math.min(24, Number(f.fontSize) || 14));
     const fontSize = Math.max(11, Math.round(baseSize * fontScale));
-    const fontFamily = (f.fontFamily && f.fontFamily.trim()) ? f.fontFamily.trim() : "Lucida Console";
     const color = FONT_COLOR_MAP[f.fontColor] ?? (f.fontColor && /^#|[a-z]/.test(f.fontColor) ? f.fontColor : "#000000");
     return {
       fontSize: `${fontSize}px`,
-      fontFamily: `${fontFamily}, monospace, sans-serif`,
+      fontFamily: pdfMatchingFontStack(f.fontFamily),
       fontWeight: f.bold ? "bold" : "normal",
       fontStyle: f.italic ? "italic" : "normal",
       textDecoration: f.underline ? "underline" : "none",
@@ -501,6 +555,7 @@ export default function SigningPage() {
     const t = (f.type || "signature").toLowerCase();
     if (t === "note" || t === "approve" || t === "decline") return false;
     if (t === "checkbox") return false; // checkbox (checked or unchecked) never blocks Complete
+    if (t === "line") return false; // line is a sender-placed cross-out, not signer-fillable
     return t !== "signature" && t !== "initial";
   });
   const allRequiredDataFieldsFilled = requiredDataFields.length === 0 || requiredDataFields.every((f) => {
@@ -709,6 +764,37 @@ export default function SigningPage() {
                           const wPct = f.wPct != null ? f.wPct : ((Number(f.width ?? 110) / rw) * 100);
                           const hPct = f.hPct != null ? f.hPct : ((Number(f.height ?? 55) / rh) * 100);
 
+                      if (typeLower === "line") {
+                        const hasEndpoints = f.x1Pct != null && f.y1Pct != null && f.x2Pct != null && f.y2Pct != null;
+                        const bw = wPct || 0.0001;
+                        const bh = hPct || 0.0001;
+                        const lx1 = hasEndpoints ? ((f.x1Pct - xPct) / bw) * 100 : 0;
+                        const ly1 = hasEndpoints ? ((f.y1Pct - yPct) / bh) * 100 : 50;
+                        const lx2 = hasEndpoints ? ((f.x2Pct - xPct) / bw) * 100 : 100;
+                        const ly2 = hasEndpoints ? ((f.y2Pct - yPct) / bh) * 100 : 50;
+                        return (
+                          <div
+                            key={f.id || `${f.page}-${f.x}-${f.y}`}
+                            className="signing-field-block signing-field-line-block"
+                            style={{
+                              position: "absolute",
+                              left: `${xPct}%`,
+                              top: `${yPct}%`,
+                              width: `${wPct}%`,
+                              height: `${hPct}%`,
+                            }}
+                            aria-hidden
+                          >
+                            <svg
+                              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", overflow: "visible" }}
+                              viewBox="0 0 100 100"
+                              preserveAspectRatio="none"
+                            >
+                              <line x1={lx1} y1={ly1} x2={lx2} y2={ly2} stroke="#111" strokeWidth={2} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+                            </svg>
+                          </div>
+                        );
+                      }
                       if (typeLower === "note") {
                         const noteText = (f.noteContent ?? "").trim();
                         if (!noteText) return null;
@@ -801,9 +887,35 @@ export default function SigningPage() {
                         const label = typeLower === "date" ? "Date signed" : typeLower === "name" ? (f.nameFormat ?? "Full Name") : typeLower.charAt(0).toUpperCase() + typeLower.slice(1);
                         const placeholderText = typeLower === "number" && f.placeholder ? f.placeholder : label;
                         const renderedPageWidthPx = Math.round(availableWidth * scale);
-                        const renderedFieldHeightPx = (hPct / 100) * renderedPageWidthPx * (rh / rw);
-                        const dynamicFontSize = `${Math.max(8, Math.round(renderedFieldHeightPx * 0.70))}px`;
+                        // Size text at the field's chosen point size converted to on-screen px (point→pixel scale of
+                        // the rendered page). This matches the sender's editor preview and the signed PDF exactly, and
+                        // is proportional to the document — so it looks the same on mobile as on desktop (never larger
+                        // or smaller relative to the page), regardless of screen size.
+                        const pxPerPt = renderedPageWidthPx / rw;
+                        const targetFontPt = Math.min(72, Math.max(6, Number(f.fontSize) || 14));
+                        const dynamicFontSize = `${Math.max(5, Math.round(targetFontPt * pxPerPt))}px`;
                         const textFormatStyle = { ...getTextFieldFormatStyle(f), fontSize: dynamicFontSize };
+                        // Text fields wrap inside a fixed-size box and shrink the font to fit, exactly like the
+                        // sender's editor preview and the signed PDF (other types stay single-line, auto-width).
+                        const isWrapText = typeLower === "text";
+                        let wrapTextStyle = textFormatStyle;
+                        if (isWrapText) {
+                          const boxWpx = (wPct / 100) * renderedPageWidthPx;
+                          const boxHpx = (hPct / 100) * renderedPageWidthPx * (rh / rw);
+                          const fontCss = textFormatStyle.fontFamily || '"Courier New", monospace';
+                          // Full box width (padding removed) so wrapping matches the burned PDF.
+                          const fitted = fitSignFontPx(String(value ?? "") || placeholderText || "", Math.max(6, boxWpx), boxHpx, targetFontPt * pxPerPt, fontCss);
+                          wrapTextStyle = {
+                            ...textFormatStyle,
+                            fontSize: `${fitted}px`,
+                            whiteSpace: "pre-wrap",
+                            wordBreak: "break-word",
+                            overflow: "hidden",
+                            resize: "none",
+                            lineHeight: SIGN_LINE_HEIGHT_RATIO,
+                            textAlign: "left",
+                          };
+                        }
                         return (
                           <div
                             key={f.id || `${f.page}-${f.x}-${f.y}`}
@@ -815,24 +927,26 @@ export default function SigningPage() {
                               // Date fields are fixed-width (always "DD/MM/YYYY" length).
                               // Using minWidth lets the measure span ("Date signed") expand the
                               // container beyond the placed size — use width to lock it.
-                              ...(typeLower === "date"
+                              ...(typeLower === "date" || isWrapText
                                 ? { width: `${wPct}%` }
                                 : { minWidth: `${wPct}%` }),
                               height: `${hPct}%`,
                             }}
                           >
-                            <span
-                              ref={(el) => { textMeasureRefs.current[f.id] = el; }}
-                              className="signing-field-text-measure"
-                              style={textFormatStyle}
-                              aria-hidden
-                            >
-                              {(typeof value === "string" ? value : String(value ?? "")) || (typeLower === "date" ? "DD/MM/YYYY" : placeholderText) || "\u00a0"}
-                            </span>
+                            {!isWrapText && (
+                              <span
+                                ref={(el) => { textMeasureRefs.current[f.id] = el; }}
+                                className="signing-field-text-measure"
+                                style={textFormatStyle}
+                                aria-hidden
+                              >
+                                {(typeof value === "string" ? value : String(value ?? "")) || (typeLower === "date" ? "DD/MM/YYYY" : placeholderText) || "\u00a0"}
+                              </span>
+                            )}
                             {isReadOnly ? (
                               <div
                                 className="signing-field-readonly-text"
-                                style={textFormatStyle}
+                                style={isWrapText ? { ...wrapTextStyle, display: "block", padding: 0, boxSizing: "border-box", width: "100%", height: "100%" } : textFormatStyle}
                                 aria-label={label}
                                 aria-readonly="true"
                               >
@@ -863,9 +977,9 @@ export default function SigningPage() {
                                 </span>
                               </div>
                             ) : typeLower === "text" ? (
-                              <input
-                                className="signing-field-text-input signing-field-textarea"
-                                style={textFormatStyle}
+                              <textarea
+                                className="signing-field-text-input"
+                                style={wrapTextStyle}
                                 value={value}
                                 onChange={(e) => {
                                   setLocalFieldOverrides((prev) => ({ ...prev, [fieldKey]: e.target.value }));

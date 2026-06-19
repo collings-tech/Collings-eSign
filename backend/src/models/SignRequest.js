@@ -13,7 +13,7 @@ const signatureFieldSchema = new mongoose.Schema(
     yPct: { type: Number },
     wPct: { type: Number },
     hPct: { type: Number },
-    type: { type: String, enum: ['signature', 'initial', 'text', 'date', 'name', 'email', 'mobile', 'stamp', 'company', 'title', 'number', 'checkbox', 'dropdown', 'radio', 'note', 'approve', 'decline'], default: 'signature' },
+    type: { type: String, enum: ['signature', 'initial', 'text', 'date', 'name', 'email', 'mobile', 'stamp', 'company', 'title', 'number', 'checkbox', 'dropdown', 'radio', 'note', 'approve', 'decline', 'line'], default: 'signature' },
     required: { type: Boolean, default: true },
     dataLabel: { type: String, default: '' },
     tooltip: { type: String, default: '' },
@@ -50,6 +50,11 @@ const signatureFieldSchema = new mongoose.Schema(
     groupName: { type: String, default: undefined },
     /** Note: sender's message to recipient (not written on document) */
     noteContent: { type: String, default: undefined },
+    /** Line: free-angle line endpoints as % of page (drawn by the sender to cross out clauses) */
+    x1Pct: { type: Number, default: undefined },
+    y1Pct: { type: Number, default: undefined },
+    x2Pct: { type: Number, default: undefined },
+    y2Pct: { type: Number, default: undefined },
   },
   { _id: false }
 );

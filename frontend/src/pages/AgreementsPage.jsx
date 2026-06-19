@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { apiClient } from "../api/client";
 import TopNavLayout from "../components/TopNavLayout.jsx";
 import { useAuth } from "../auth/AuthContext.jsx";
@@ -46,6 +46,20 @@ function getRecipientsLine(agreement) {
 export default function AgreementsPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  // One-off confirmation passed from the editor after saving changes to a sent document.
+  const [savedNotice, setSavedNotice] = useState(location.state?.savedNotice || "");
+  useEffect(() => {
+    // Clear the router state so the notice doesn't reappear on refresh/back, then auto-dismiss it.
+    if (location.state?.savedNotice) {
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+    if (savedNotice) {
+      const timer = setTimeout(() => setSavedNotice(""), 6000);
+      return () => clearTimeout(timer);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [docs, setDocs] = useState([]);
   const [deletedDocs, setDeletedDocs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -293,6 +307,19 @@ export default function AgreementsPage() {
 
   return (
     <TopNavLayout>
+      {savedNotice && (
+        <div
+          role="status"
+          style={{
+            position: "fixed", top: 70, left: "50%", transform: "translateX(-50%)", zIndex: 1000,
+            background: "#ecfdf5", color: "#065f46", border: "1px solid #6ee7b7",
+            padding: "10px 16px", borderRadius: 8, boxShadow: "0 4px 14px rgba(0,0,0,0.12)",
+            fontSize: 14, fontWeight: 500, maxWidth: "90vw",
+          }}
+        >
+          {savedNotice}
+        </div>
+      )}
       <div className="agreements-shell">
         <aside className="agreements-sidebar">
           <div className="agreements-sidebar-top">
