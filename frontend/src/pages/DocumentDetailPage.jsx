@@ -232,6 +232,8 @@ function DocumentDetailPage() {
   const [creatingSigner, setCreatingSigner] = useState(false);
   const [selfSigning, setSelfSigning] = useState(false);
   const [sending, setSending] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [resendNotice, setResendNotice] = useState(""); // transient toast after resending the signing link
   const [sendSuccess, setSendSuccess] = useState(null);
   const [sendError, setSendError] = useState(null); // modal message when send fails (e.g. email bounced)
   const [agreementTab, setAgreementTab] = useState("recipients"); // recipients | details (when not draft)
@@ -1076,6 +1078,35 @@ function DocumentDetailPage() {
     }
   }, [doc?._id]);
 
+  // Resend the signing link to every recipient who hasn't signed yet. Uses their existing
+  // name/email on file (backend resends to all unsigned sign requests when no overrides are sent).
+  const handleResend = useCallback(async () => {
+    if (!doc?._id) return;
+    setResending(true);
+    setResendNotice("");
+    try {
+      const res = await apiClient.post(`/documents/${doc._id}/resend`, {});
+      const count = res.data?.sentCount ?? 0;
+      setResendNotice(
+        count > 0
+          ? `Signing link resent to ${count} recipient${count === 1 ? "" : "s"}.`
+          : "No pending recipients to resend to."
+      );
+    } catch (err) {
+      console.error(err);
+      setResendNotice(err.response?.data?.error || "Failed to resend. Please try again.");
+    } finally {
+      setResending(false);
+    }
+  }, [doc?._id]);
+
+  // Auto-dismiss the resend toast.
+  useEffect(() => {
+    if (!resendNotice) return;
+    const timer = setTimeout(() => setResendNotice(""), 6000);
+    return () => clearTimeout(timer);
+  }, [resendNotice]);
+
   const confirmDeletePage = useCallback(async () => {
     if (pageToDelete == null) return;
     setDeletingPage(true);
@@ -1355,7 +1386,19 @@ function DocumentDetailPage() {
     return (
       <TopNavLayout>
         <div className="agreement-detail-shell">
-     
+          {resendNotice && (
+            <div
+              role="status"
+              style={{
+                position: "fixed", top: 70, left: "50%", transform: "translateX(-50%)", zIndex: 1000,
+                background: "#ecfdf5", color: "#065f46", border: "1px solid #6ee7b7",
+                padding: "10px 16px", borderRadius: 8, boxShadow: "0 4px 14px rgba(0,0,0,0.12)",
+                fontSize: 14, fontWeight: 500, maxWidth: "90vw",
+              }}
+            >
+              {resendNotice}
+            </div>
+          )}
 
           <div className="agreement-detail-status-row">
             <div className="agreement-detail-status-left">
@@ -1406,6 +1449,16 @@ function DocumentDetailPage() {
                   Edit
                 </button>
               )}
+              {isOwnerUser && doc.status === "pending" && !allSigned && (
+                <button
+                  type="button"
+                  className="agreement-detail-btn secondary"
+                  onClick={handleResend}
+                  disabled={resending}
+                >
+                  {resending ? "Resending…" : "Resend"}
+                </button>
+              )}
               <button
                 type="button"
                 className="agreement-detail-btn secondary"
@@ -1413,7 +1466,6 @@ function DocumentDetailPage() {
               >
                 Download
               </button>
-              <button type="button" className="agreement-detail-more-btn" aria-label="More actions">⋯</button>
             </div>
           </div>
 

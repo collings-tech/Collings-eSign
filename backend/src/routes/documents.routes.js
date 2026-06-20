@@ -708,6 +708,31 @@ router.put('/:id/signing-fields', requireAuth, async (req, res) => {
           if (f.y2Pct != null && Number.isFinite(Number(f.y2Pct))) fieldData.y2Pct = Number(f.y2Pct);
           return fieldData;
         });
+      // Clear stale auto-populated defaults so an edited default value takes effect.
+      // /send freezes each field's defaultValue into fieldValues on first send; the burn and
+      // signer view then read fieldValues first. If the owner later edits a default and re-sends,
+      // that frozen copy would otherwise shadow the new value. Any fieldValues entry that still
+      // equals the field's PREVIOUS default was never signer-entered, so drop it and let the new
+      // defaultValue flow through. Signed recipients keep their submitted values untouched.
+      if (sr.status !== 'signed' && sr.fieldValues && Object.keys(sr.fieldValues).length) {
+        const oldDefaults = new Map();
+        for (const oldF of sr.signatureFields || []) {
+          const k = oldF.id || `field-${oldF.page}-${oldF.x}-${oldF.y}-${oldF.type}`;
+          if (oldF.defaultValue != null) oldDefaults.set(k, String(oldF.defaultValue).trim());
+        }
+        const fv = { ...sr.fieldValues };
+        let fvChanged = false;
+        for (const [k, v] of Object.entries(fv)) {
+          if (oldDefaults.has(k) && String(v).trim() === oldDefaults.get(k)) {
+            delete fv[k];
+            fvChanged = true;
+          }
+        }
+        if (fvChanged) {
+          sr.fieldValues = fv;
+          sr.markModified('fieldValues');
+        }
+      }
       sr.signatureFields = forThisSigner;
       await sr.save();
     }
