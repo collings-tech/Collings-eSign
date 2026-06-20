@@ -232,7 +232,10 @@ function DocumentDetailPage() {
   const [creatingSigner, setCreatingSigner] = useState(false);
   const [selfSigning, setSelfSigning] = useState(false);
   const [sending, setSending] = useState(false);
-  const [resending, setResending] = useState(false);
+  const [resendModalOpen, setResendModalOpen] = useState(false);
+  const [resendEdits, setResendEdits] = useState({}); // { [signRequestId]: { name, email } }
+  const [resendSubmitting, setResendSubmitting] = useState(false);
+  const [resendError, setResendError] = useState("");
   const [resendNotice, setResendNotice] = useState(""); // transient toast after resending the signing link
   const [sendSuccess, setSendSuccess] = useState(null);
   const [sendError, setSendError] = useState(null); // modal message when send fails (e.g. email bounced)
@@ -1078,15 +1081,60 @@ function DocumentDetailPage() {
     }
   }, [doc?._id]);
 
-  // Resend the signing link to every recipient who hasn't signed yet. Uses their existing
-  // name/email on file (backend resends to all unsigned sign requests when no overrides are sent).
-  const handleResend = useCallback(async () => {
+  // Open the "Resend to recipients" modal (mirrors the Agreements list). Lets the owner review/edit
+  // each pending recipient's name & email before re-sending the signing link.
+  const openResendModal = useCallback(() => {
+    const waiting = signers.filter((sr) => sr.status !== "signed");
+    const edits = {};
+    waiting.forEach((sr) => {
+      const sid = sr._id?.toString?.() || sr.signLinkToken;
+      if (sid) edits[sid] = { email: sr.signerEmail || "", name: sr.signerName || "" };
+    });
+    setResendEdits(edits);
+    setResendError("");
+    setResendModalOpen(true);
+  }, [signers]);
+
+  const closeResendModal = useCallback(() => {
+    setResendModalOpen(false);
+    setResendEdits({});
+    setResendError("");
+  }, []);
+
+  const setResendEdit = useCallback((signRequestId, field, value) => {
+    setResendEdits((prev) => ({
+      ...prev,
+      [signRequestId]: { ...(prev[signRequestId] || {}), [field]: value },
+    }));
+  }, []);
+
+  const handleResendSubmit = useCallback(async () => {
     if (!doc?._id) return;
-    setResending(true);
-    setResendNotice("");
+    const waiting = signers.filter((sr) => sr.status !== "signed");
+    const hasEmptyEmail = waiting.some((sr) => {
+      const sid = sr._id?.toString?.() || sr.signLinkToken;
+      const e = resendEdits[sid];
+      return !(e?.email || sr.signerEmail || "").trim();
+    });
+    if (hasEmptyEmail) {
+      setResendError("Each recipient must have an email address.");
+      return;
+    }
+    setResendSubmitting(true);
+    setResendError("");
     try {
-      const res = await apiClient.post(`/documents/${doc._id}/resend`, {});
-      const count = res.data?.sentCount ?? 0;
+      const recipients = waiting.map((sr) => {
+        const sid = sr._id?.toString?.() || sr.signLinkToken;
+        const e = resendEdits[sid] || {};
+        return {
+          signRequestId: sr._id,
+          email: (e.email || sr.signerEmail || "").trim(),
+          name: (e.name ?? sr.signerName ?? "").trim() || (e.email || sr.signerEmail || "").trim(),
+        };
+      });
+      const res = await apiClient.post(`/documents/${doc._id}/resend`, { recipients });
+      const count = res.data?.sentCount ?? recipients.length;
+      closeResendModal();
       setResendNotice(
         count > 0
           ? `Signing link resent to ${count} recipient${count === 1 ? "" : "s"}.`
@@ -1094,11 +1142,11 @@ function DocumentDetailPage() {
       );
     } catch (err) {
       console.error(err);
-      setResendNotice(err.response?.data?.error || "Failed to resend. Please try again.");
+      setResendError(err.response?.data?.error || err.message || "Failed to resend");
     } finally {
-      setResending(false);
+      setResendSubmitting(false);
     }
-  }, [doc?._id]);
+  }, [doc?._id, signers, resendEdits, closeResendModal]);
 
   // Auto-dismiss the resend toast.
   useEffect(() => {
@@ -1400,6 +1448,77 @@ function DocumentDetailPage() {
             </div>
           )}
 
+          {resendModalOpen && (
+            <div
+              className="adopt-modal-backdrop"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="detail-resend-modal-title"
+              onClick={closeResendModal}
+            >
+              <div className="adopt-modal resend-modal" onClick={(e) => e.stopPropagation()}>
+                <button
+                  type="button"
+                  className="adopt-modal-close"
+                  onClick={closeResendModal}
+                  aria-label="Close"
+                >
+                  <i className="lni lni-xmark" aria-hidden />
+                </button>
+                <h2 id="detail-resend-modal-title" className="adopt-modal-title">
+                  Resend to recipients
+                </h2>
+                <p className="adopt-modal-subtitle">
+                  Update email or name below if needed, then click Resend. The signing link will be sent to each recipient.
+                </p>
+                <div className="resend-modal-recipients">
+                  {signers.filter((sr) => sr.status !== "signed").map((sr, idx) => {
+                    const sid = sr._id?.toString?.() || sr.signLinkToken;
+                    const edit = resendEdits[sid] || {};
+                    const email = edit.email ?? sr.signerEmail ?? "";
+                    const name = edit.name ?? sr.signerName ?? "";
+                    return (
+                      <div key={sid || idx} className="resend-modal-row">
+                        <label className="adopt-modal-field">
+                          <span>Name</span>
+                          <input
+                            type="text"
+                            value={name}
+                            onChange={(e) => setResendEdit(sid, "name", e.target.value)}
+                            placeholder="Recipient name"
+                          />
+                        </label>
+                        <label className="adopt-modal-field">
+                          <span>Email</span>
+                          <input
+                            type="email"
+                            value={email}
+                            onChange={(e) => setResendEdit(sid, "email", e.target.value)}
+                            placeholder="email@example.com"
+                          />
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+                {resendError && <p className="adopt-error">{resendError}</p>}
+                <div className="adopt-modal-actions">
+                  <button type="button" className="adopt-btn secondary" onClick={closeResendModal}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="adopt-btn primary"
+                    onClick={handleResendSubmit}
+                    disabled={resendSubmitting}
+                  >
+                    {resendSubmitting ? "Sending…" : "Resend"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="agreement-detail-status-row">
             <div className="agreement-detail-status-left">
               <span className="agreement-detail-status-badge">
@@ -1453,10 +1572,9 @@ function DocumentDetailPage() {
                 <button
                   type="button"
                   className="agreement-detail-btn secondary"
-                  onClick={handleResend}
-                  disabled={resending}
+                  onClick={openResendModal}
                 >
-                  {resending ? "Resending…" : "Resend"}
+                  Resend
                 </button>
               )}
               <button
