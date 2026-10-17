@@ -231,7 +231,7 @@ export default function NewAgreementPage() {
             const urlRes = await apiClient.get(`/documents/${doc._id}/file-url`);
             if (urlRes.data?.url) fileUrl = urlRes.data.url;
           } catch {
-            fileUrl = doc.originalFilePath ? `${API_BASE}/uploads/${doc.originalFilePath}` : null;
+            fileUrl = null;
           }
         }
         setExistingDocument({

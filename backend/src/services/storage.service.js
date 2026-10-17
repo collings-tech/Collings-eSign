@@ -7,10 +7,14 @@ const { createClient } = require('@supabase/supabase-js');
 
 const BUCKET = process.env.SUPABASE_STORAGE_BUCKET || 'documents';
 const SIGNED_URL_EXPIRY_SECONDS = 5 * 60; // 5 minutes (default for backward compatibility)
-/** For document links sent in emails (e.g. signing link flow) */
-const ONE_WEEK_SECONDS = 7 * 24 * 60 * 60;
-/** For in-app document URLs (thumbnails, detail view, dashboard) */
-const ONE_YEAR_SECONDS = 365 * 24 * 60 * 60;
+/**
+ * For document view URLs handed to the app and the signing page. The client
+ * requests a fresh URL from /file-url every time it opens a document, and
+ * emails never embed a file URL (they link to the signing page), so one hour
+ * comfortably covers a viewing session. Previously in-app URLs lived a year
+ * and signing-page URLs a week.
+ */
+const VIEW_URL_EXPIRY_SECONDS = 60 * 60;
 
 function getSupabase() {
   const url = process.env.SUPABASE_URL;
@@ -94,6 +98,5 @@ module.exports = {
   signedKey,
   BUCKET,
   SIGNED_URL_EXPIRY_SECONDS,
-  ONE_WEEK_SECONDS,
-  ONE_YEAR_SECONDS,
+  VIEW_URL_EXPIRY_SECONDS,
 };

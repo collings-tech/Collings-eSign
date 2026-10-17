@@ -7,7 +7,8 @@ const { requireAuth } = require('../middleware/auth');
 const Document = require('../models/Document');
 const SignRequest = require('../models/SignRequest');
 const User = require('../models/User');
-const { uploadDir } = require('../config/env');
+const { uploadDir, maxUploadBytes } = require('../config/env');
+const { fileUrl: signedLocalFileUrl } = require('../services/fileToken.service');
 const { createSignRequest } = require('../services/signing.service');
 const { sendDocuSignStyleSignEmail, sendDocumentUpdatedEmail } = require('../services/email.service');
 const { logEvent } = require('../services/audit.service');
@@ -34,8 +35,11 @@ async function assertDocEditable(doc) {
   return { ok: true };
 }
 
-const upload = multer({
+const uploadFields = multer({
   storage: multer.memoryStorage(),
+  // Files are buffered in memory, so an unbounded upload was an easy way to
+  // exhaust the process. Cap each file and the number of files.
+  limits: { fileSize: maxUploadBytes, files: 20 },
   fileFilter: (req, file, cb) => {
     if (file.mimetype !== 'application/pdf') return cb(new Error('Only PDF files are allowed'));
     cb(null, true);
@@ -44,6 +48,23 @@ const upload = multer({
   { name: 'file', maxCount: 1 },
   { name: 'files', maxCount: 20 },
 ]);
+
+// Turn multer's errors into a 400/413 instead of a 500 with a stack trace.
+function upload(req, res, next) {
+  uploadFields(req, res, (err) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: `Each PDF must be ${Math.floor(maxUploadBytes / (1024 * 1024))}MB or smaller.` });
+      }
+      if (err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE') {
+        return res.status(400).json({ error: 'Too many files, or an unexpected file field.' });
+      }
+      return res.status(400).json({ error: err.message });
+    }
+    return res.status(400).json({ error: err.message || 'Invalid upload.' });
+  });
+}
 
 // Parse optional JSON body fields (sent as strings in FormData)
 function parseBodyFields(body) {
@@ -481,15 +502,19 @@ router.get('/past-recipients', requireAuth, async (req, res) => {
   }
 });
 
-// Resolve view URL for a document (signed version if exists, else original). For storage: signed URL (1 year for in-app).
+// Resolve a view URL for a document (signed version if it exists, else the
+// original). Both storage modes hand back a short-lived signed URL: the client
+// asks /file-url each time it opens the document, so the link only needs to
+// outlive one viewing session. In-app links used to be valid for a year, which
+// meant a copied URL kept working long after access to the app was removed.
 async function getDocumentViewUrl(doc, baseUrl) {
   const key = doc.signedKey || doc.originalKey;
   if (key && storageService.isStorageConfigured()) {
-    return storageService.getSignedUrl(key, storageService.ONE_YEAR_SECONDS);
+    return storageService.getSignedUrl(key, storageService.VIEW_URL_EXPIRY_SECONDS);
   }
   const filePath = doc.signedFilePath || doc.originalFilePath;
   if (filePath) {
-    return `${baseUrl}/uploads/${filePath}`;
+    return signedLocalFileUrl(baseUrl, filePath, storageService.VIEW_URL_EXPIRY_SECONDS);
   }
   return null;
 }
