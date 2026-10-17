@@ -10,6 +10,9 @@ const { logEvent } = require('../services/audit.service');
 const storageService = require('../services/storage.service');
 const { renderAllSignaturesToBuffer } = require('../services/pdfSign.service');
 const { uploadDir } = require('../config/env');
+const { requireAuth } = require('../middleware/auth');
+const { findReadableDocument } = require('../services/access.service');
+const { fileUrl: signedLocalFileUrl } = require('../services/fileToken.service');
 const { sendDocumentViewedNotificationToSender } = require('../services/email.service');
 
 const router = express.Router();
@@ -17,19 +20,15 @@ const router = express.Router();
 async function getDocumentViewUrl(doc, baseUrl, expiresInSeconds) {
   // Always prefer signed over original so after Complete the viewer gets the signed PDF
   const key = doc.signedKey || doc.originalKey;
+  const expiry = expiresInSeconds ?? storageService.VIEW_URL_EXPIRY_SECONDS;
   if (key && storageService.isStorageConfigured()) {
-    const expiry = expiresInSeconds ?? storageService.ONE_WEEK_SECONDS;
-    const url = await storageService.getSignedUrl(key, expiry);
-    return url;
+    return storageService.getSignedUrl(key, expiry);
   }
   const filePath = doc.signedFilePath || doc.originalFilePath;
   if (filePath) {
-    let url = `${baseUrl}/uploads/${filePath}`;
-    if (doc.signedFilePath) {
-      url += url.includes('?') ? '&' : '?';
-      url += `v=signed&t=${Date.now()}`;
-    }
-    return url;
+    // The token embeds an expiry, so the URL already changes between the
+    // original and signed artefacts and per request; no cache-buster needed.
+    return signedLocalFileUrl(baseUrl, filePath, expiry);
   }
   return null;
 }
@@ -54,7 +53,7 @@ router.get('/:token/file-url', async (req, res) => {
       return res.status(404).json({ error: 'Document not found' });
     }
     const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const url = await getDocumentViewUrl(doc, baseUrl, storageService.ONE_WEEK_SECONDS);
+    const url = await getDocumentViewUrl(doc, baseUrl);
     if (!url) {
       return res.status(404).json({ error: 'Document file not found' });
     }
@@ -318,11 +317,20 @@ router.post('/:token/decline', async (req, res) => {
   }
 });
 
-// Owner: audit logs for a document
-router.get('/document/:documentId/audit-logs', async (req, res) => {
+// Audit logs for a document: the owner, or a signer on it. Previously this
+// route had no authentication at all, so anyone holding a document id could
+// read the trail (actor emails, events, metadata).
+router.get('/document/:documentId/audit-logs', requireAuth, async (req, res) => {
   try {
     const { documentId } = req.params;
-    const logs = await AuditLog.find({ documentId }).sort({ createdAt: 1 }).lean();
+    if (!/^[a-f\d]{24}$/i.test(documentId)) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    const doc = await findReadableDocument(documentId, req.user);
+    if (!doc) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    const logs = await AuditLog.find({ documentId: doc._id }).sort({ createdAt: 1 }).lean();
     res.json(logs);
   } catch (err) {
     console.error(err);

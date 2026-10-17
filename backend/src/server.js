@@ -13,6 +13,7 @@ const signRequestsRoutes = require('./routes/signRequests.routes');
 const signingRoutes = require('./routes/signing.routes');
 const signupRequestsRoutes = require('./routes/signupRequests.routes');
 const usersRoutes = require('./routes/users.routes');
+const filesRoutes = require('./routes/files.routes');
 
 const app = express();
 
@@ -30,8 +31,17 @@ app.use(
 app.use(express.json({ limit: '10mb' }));
 app.use(authOptional);
 
-// Static files for uploaded documents
-app.use('/uploads', express.static(uploadDir));
+// Only profile photos are served as plain static files: they are shown with
+// <img> tags that cannot carry a bearer token, and they are not sensitive.
+// Document PDFs were previously served from the whole upload directory with no
+// authentication; they now go through /files/:token (signed, expiring) or the
+// authenticated /documents and token-scoped /signing routes.
+app.use('/uploads/profiles', express.static(path.join(uploadDir, 'profiles'), {
+  dotfiles: 'deny',
+  index: false,
+  setHeaders(res) { res.setHeader('X-Content-Type-Options', 'nosniff'); },
+}));
+app.use('/files', filesRoutes);
 
 // Routes
 app.use('/auth', authRoutes);
@@ -45,8 +55,6 @@ app.use('/users', usersRoutes);
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
-
-// TODO: mount routes (auth, documents, signRequests, signing)
 
 async function seedDefaultAdmin() {
   if (!defaultAdminEmail || !defaultAdminPassword) {

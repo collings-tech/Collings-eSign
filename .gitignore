@@ -32,3 +32,5 @@ pnpm-debug.log*
 
 # Uploads (often contain user data)
 backend/uploads/
+backend/test/tmp-uploads/
+backend/test/.tmp-uploads/
