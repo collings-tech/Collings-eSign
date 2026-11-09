@@ -4,7 +4,7 @@ const fs = require('fs').promises;
 const SignRequest = require('../models/SignRequest');
 const Document = require('../models/Document');
 const User = require('../models/User');
-const { saveSignatureOnly, saveFieldValue, completeSigning, approveSigning, declineSigning } = require('../services/signing.service');
+const { saveSignatureOnly, saveFieldValue, completeSigning, approveSigning, declineSigning, signingClosedReason } = require('../services/signing.service');
 const AuditLog = require('../models/AuditLog');
 const { logEvent } = require('../services/audit.service');
 const storageService = require('../services/storage.service');
@@ -31,6 +31,15 @@ async function getDocumentViewUrl(doc, baseUrl, expiresInSeconds) {
     return signedLocalFileUrl(baseUrl, filePath, expiry);
   }
   return null;
+}
+
+/** Respond with why this link can no longer be acted on, if it can't. */
+async function refuseIfClosed(signReq, res) {
+  const doc = await Document.findById(signReq.documentId).select('status').lean();
+  const closed = signingClosedReason(doc, signReq);
+  if (!closed) return false;
+  res.status(closed.status).json({ error: closed.error, code: closed.code });
+  return true;
 }
 
 function isSignLinkExpired(signReq) {
@@ -209,6 +218,7 @@ router.post('/:token/sign', async (req, res) => {
     if (isSignLinkExpired(existing)) {
       return res.status(410).json({ error: 'This link has expired', code: 'LINK_EXPIRED' });
     }
+    if (await refuseIfClosed(existing, res)) return;
     const signReq = await saveSignatureOnly({ token, signatureData, fieldId });
     if (!signReq) {
       return res.status(404).json({ error: 'Sign request not found' });
@@ -235,6 +245,7 @@ router.patch('/:token/field-value', async (req, res) => {
     if (isSignLinkExpired(existing)) {
       return res.status(410).json({ error: 'This link has expired', code: 'LINK_EXPIRED' });
     }
+    if (await refuseIfClosed(existing, res)) return;
     const signReq = await saveFieldValue({ token, fieldId, value });
     if (!signReq) {
       return res.status(404).json({ error: 'Sign request not found' });
@@ -260,6 +271,7 @@ router.post('/:token/complete', async (req, res) => {
     if (signReq.status === 'signed') {
       return res.json({ success: true });
     }
+    if (await refuseIfClosed(signReq, res)) return;
     const sigFields = (signReq.signatureFields || []).filter((f) => {
       const t = String(f.type || 'signature').toLowerCase();
       return t === 'signature' || t === 'initial';
@@ -280,6 +292,7 @@ router.post('/:token/complete', async (req, res) => {
     await completeSigning({ token, ip, userAgent });
     res.json({ success: true });
   } catch (err) {
+    if (err.httpStatus) return res.status(err.httpStatus).json({ error: err.message, code: err.code });
     console.error('[signing] complete failed', err);
     res.status(500).json({ error: err.message || 'Internal server error' });
   }
@@ -292,6 +305,7 @@ router.post('/:token/approve', async (req, res) => {
     const signReq = await SignRequest.findOne({ signLinkToken: token });
     if (!signReq) return res.status(404).json({ error: 'Sign request not found' });
     if (isSignLinkExpired(signReq)) return res.status(410).json({ error: 'This link has expired', code: 'LINK_EXPIRED' });
+    if (await refuseIfClosed(signReq, res)) return;
     await approveSigning({ token });
     res.json({ success: true });
   } catch (err) {
@@ -307,6 +321,7 @@ router.post('/:token/decline', async (req, res) => {
     const signReq = await SignRequest.findOne({ signLinkToken: token });
     if (!signReq) return res.status(404).json({ error: 'Sign request not found' });
     if (isSignLinkExpired(signReq)) return res.status(410).json({ error: 'This link has expired', code: 'LINK_EXPIRED' });
+    if (await refuseIfClosed(signReq, res)) return;
     const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress || req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'] || '';
     await declineSigning({ token, ip, userAgent });
