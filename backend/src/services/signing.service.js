@@ -68,6 +68,40 @@ async function createSignRequest({
   return signRequest;
 }
 
+/** The only document states a signing link works in: a draft (the sender
+ * signing their own copy before sending) or one out for signature. An
+ * allowlist, so a state added later stays closed until it is listed here. */
+const SIGNABLE_STATUSES = ["draft", "pending"];
+
+/**
+ * Why this signer can't act on the document any more, or null if they can.
+ * A voided, cancelled, completed or deleted document is closed for everyone,
+ * and a signer who declined can't then sign: otherwise completing re-embeds a
+ * signature into the PDF over the VOID copy and can flip it to completed.
+ */
+function signingClosedReason(doc, signRequest) {
+  if (!doc || doc.status === "deleted") {
+    return { status: 404, code: "DOCUMENT_NOT_FOUND", error: "Document not found" };
+  }
+  if (doc.status === "voided") {
+    return { status: 409, code: "DOCUMENT_VOIDED", error: "This document has been voided and can no longer be signed" };
+  }
+  if (!SIGNABLE_STATUSES.includes(doc.status)) {
+    return { status: 409, code: "DOCUMENT_CLOSED", error: "This document is no longer open for signing" };
+  }
+  if (signRequest && signRequest.status === "declined") {
+    return { status: 409, code: "SIGNER_DECLINED", error: "You declined this document, so it can no longer be signed" };
+  }
+  return null;
+}
+
+function closedError(reason) {
+  const err = new Error(reason.error);
+  err.code = reason.code;
+  err.httpStatus = reason.status;
+  return err;
+}
+
 /** Save signature only; do NOT embed in PDF until Complete. If fieldId is provided, stores per-field; otherwise legacy (one signature for all). */
 async function saveSignatureOnly({ token, signatureData, fieldId }) {
   const signRequest = await SignRequest.findOne({ signLinkToken: token });
@@ -128,9 +162,8 @@ async function completeSigning({ token, ip, userAgent }) {
   // If no signature fields, allow complete (e.g. document with only text fields, or approve-only)
 
   const doc = await Document.findById(signRequest.documentId).lean();
-  if (!doc) {
-    throw new Error("Document not found");
-  }
+  const closed = signingClosedReason(doc, signRequest);
+  if (closed) throw closedError(closed);
 
   let signedResult; // { key, buffer }
   try {
@@ -146,7 +179,16 @@ async function completeSigning({ token, ip, userAgent }) {
   } else {
     update.signedFilePath = signedResult.key;
   }
-  await Document.findByIdAndUpdate(signRequest.documentId, update);
+  // Only if it is still open: a void that landed while the PDF was being
+  // built must not be overwritten by the signed copy.
+  const written = await Document.updateOne(
+    { _id: signRequest.documentId, status: { $in: SIGNABLE_STATUSES } },
+    update,
+  );
+  if (!written.matchedCount) {
+    const now = await Document.findById(signRequest.documentId).select("status").lean();
+    throw closedError(signingClosedReason(now, signRequest) || signingClosedReason({ status: "closed" }));
+  }
 
   signRequest.status = "signed";
   signRequest.signedAt = new Date();
@@ -175,10 +217,10 @@ async function completeSigning({ token, ip, userAgent }) {
   const allSigned = totalSigners > 0 && totalSigners === signedCount;
 
   if (allSigned) {
-    await Document.findByIdAndUpdate(signRequest.documentId, {
-      status: "completed",
-      signedAt: new Date(),
-    });
+    await Document.updateOne(
+      { _id: signRequest.documentId, status: { $in: SIGNABLE_STATUSES } },
+      { status: "completed", signedAt: new Date() },
+    );
     const allForDoc = await SignRequest.find({ documentId: signRequest.documentId }).lean();
     const owner = await User.findById(doc.ownerId).lean();
     const fileName = (documentTitle.endsWith(".pdf") ? documentTitle : `${documentTitle}.pdf`);
@@ -357,6 +399,7 @@ async function sendToNextSignerInOrder(documentId) {
 }
 
 module.exports = {
+  signingClosedReason,
   createSignRequest,
   saveSignatureOnly,
   saveFieldValue,
