@@ -68,11 +68,16 @@ async function createSignRequest({
   return signRequest;
 }
 
+/** The only document states a signing link works in: a draft (the sender
+ * signing their own copy before sending) or one out for signature. An
+ * allowlist, so a state added later stays closed until it is listed here. */
+const SIGNABLE_STATUSES = ["draft", "pending"];
+
 /**
  * Why this signer can't act on the document any more, or null if they can.
- * A voided or deleted document is closed for everyone, and a signer who
- * declined can't then sign: otherwise completing re-embeds a signature into
- * the PDF over the VOID copy and can flip the document to completed.
+ * A voided, cancelled, completed or deleted document is closed for everyone,
+ * and a signer who declined can't then sign: otherwise completing re-embeds a
+ * signature into the PDF over the VOID copy and can flip it to completed.
  */
 function signingClosedReason(doc, signRequest) {
   if (!doc || doc.status === "deleted") {
@@ -80,6 +85,9 @@ function signingClosedReason(doc, signRequest) {
   }
   if (doc.status === "voided") {
     return { status: 409, code: "DOCUMENT_VOIDED", error: "This document has been voided and can no longer be signed" };
+  }
+  if (!SIGNABLE_STATUSES.includes(doc.status)) {
+    return { status: 409, code: "DOCUMENT_CLOSED", error: "This document is no longer open for signing" };
   }
   if (signRequest && signRequest.status === "declined") {
     return { status: 409, code: "SIGNER_DECLINED", error: "You declined this document, so it can no longer be signed" };
@@ -174,11 +182,12 @@ async function completeSigning({ token, ip, userAgent }) {
   // Only if it is still open: a void that landed while the PDF was being
   // built must not be overwritten by the signed copy.
   const written = await Document.updateOne(
-    { _id: signRequest.documentId, status: { $nin: ["voided", "deleted"] } },
+    { _id: signRequest.documentId, status: { $in: SIGNABLE_STATUSES } },
     update,
   );
   if (!written.matchedCount) {
-    throw closedError(signingClosedReason({ status: "voided" }, signRequest));
+    const now = await Document.findById(signRequest.documentId).select("status").lean();
+    throw closedError(signingClosedReason(now, signRequest) || signingClosedReason({ status: "closed" }));
   }
 
   signRequest.status = "signed";
@@ -209,7 +218,7 @@ async function completeSigning({ token, ip, userAgent }) {
 
   if (allSigned) {
     await Document.updateOne(
-      { _id: signRequest.documentId, status: { $nin: ["voided", "deleted"] } },
+      { _id: signRequest.documentId, status: { $in: SIGNABLE_STATUSES } },
       { status: "completed", signedAt: new Date() },
     );
     const allForDoc = await SignRequest.find({ documentId: signRequest.documentId }).lean();

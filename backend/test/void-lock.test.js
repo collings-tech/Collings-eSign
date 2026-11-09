@@ -110,6 +110,21 @@ it('does not overwrite a void that lands while the signed copy is being built', 
   expect((await SignRequest.findOne({ signLinkToken: 'tok-b' }).lean()).status).not.toBe('signed');
 });
 
+it.each(['cancelled', 'completed', 'some-future-state'])('refuses to sign a %s document', async (status) => {
+  await Document.updateOne({ _id: doc._id }, { $set: { status } }, { strict: false, runValidators: false });
+  const res = await request(app).post('/signing/tok-b/complete');
+  expect(res.status).toBe(409);
+  expect(res.body.code).toBe('DOCUMENT_CLOSED');
+  expect(pdf.embedSignatureInPdf).not.toHaveBeenCalled();
+});
+
+it('lets the sender sign their own draft', async () => {
+  await Document.updateOne({ _id: doc._id }, { status: 'draft' });
+  await SignRequest.updateOne({ signLinkToken: 'tok-a' }, { status: 'signed', signedAt: new Date() });
+  const res = await request(app).post('/signing/tok-b/complete');
+  expect(res.status).toBe(200);
+});
+
 it('turns a signer away once they have declined', () => {
   expect(signingClosedReason({ status: 'pending' }, { status: 'declined' }).code).toBe('SIGNER_DECLINED');
   expect(signingClosedReason({ status: 'pending' }, { status: 'pending' })).toBeNull();
