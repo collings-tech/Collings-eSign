@@ -220,7 +220,8 @@ router.get('/agreements', requireAuth, async (req, res) => {
         signerName: sr.signerName,
         signerEmail: sr.signerEmail,
         status: sr.status,
-        signLinkToken: sr.signLinkToken,
+        // Only the caller's own signing link: it is that signer's credential.
+        ...((sr.signerEmail || '').toLowerCase() === myEmail ? { signLinkToken: sr.signLinkToken } : {}),
       });
     }
     const agreements = docs.map((d) => {

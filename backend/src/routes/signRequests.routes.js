@@ -74,6 +74,7 @@ router.get("/:documentId", requireAuth, async (req, res) => {
       _id: documentId,
       ownerId: req.user.id,
     });
+    const isOwner = Boolean(doc);
     if (!doc) {
       const myEmail = (req.user.email || "").toLowerCase();
       const mySignReq = await SignRequest.findOne({
@@ -99,10 +100,22 @@ router.get("/:documentId", requireAuth, async (req, res) => {
         usersByEmail[(u.email || "").toLowerCase()] = u.profileImageUrl || null;
       });
     }
-    const signReqsWithProfile = signReqs.map((sr) => ({
-      ...sr,
-      signerProfileImageUrl: usersByEmail[(sr.signerEmail || "").toLowerCase()] || null,
-    }));
+    const myEmail = (req.user.email || "").toLowerCase();
+    const signReqsWithProfile = signReqs.map((sr) => {
+      const row = {
+        ...sr,
+        signerProfileImageUrl: usersByEmail[(sr.signerEmail || "").toLowerCase()] || null,
+      };
+      // A signing link is the signer's credential: only its own signer gets it,
+      // never the sender or another signer on the same document.
+      if ((sr.signerEmail || "").toLowerCase() !== myEmail) delete row.signLinkToken;
+      // Where and on what device someone signed is for the sender only.
+      if (!isOwner) {
+        delete row.signerIp;
+        delete row.userAgent;
+      }
+      return row;
+    });
     res.json(signReqsWithProfile);
   } catch (err) {
     console.error(err);
